@@ -1,7 +1,7 @@
 // Unit model: stats, movement along a smoothed path, door breaching, damage and
 // death. Rendering lives in render/entities.js — a unit here is plain state.
 
-import { UNIT_CLASSES, UNIT_RADIUS } from '../config.js';
+import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED } from '../config.js';
 import { rectContains } from '../level.js';
 
 let nextId = 1;
@@ -21,6 +21,11 @@ export class Unit {
         this.maxHp = this.stats.hp;
         this.hp = this.maxHp;
         this.alive = true;
+        // A downed unit is out of the fight but not gone: alive === false and
+        // downed === true. Once it bleeds out both are false and it is dead.
+        this.downed = false;
+        this.bleedOut = 0;
+        this.reviveProgress = 0;
         this.selected = false;
 
         this.path = null;
@@ -34,6 +39,14 @@ export class Unit {
         this.burstGapTimer = 0;
         this.target = null;
         this.muzzleFlash = 0;
+        this.grenadesLeft = this.stats.grenade ? this.stats.grenade.count : 0;
+        this.grenadeTimer = 0;
+
+        // How long this unit has been standing still (the marksman needs to be
+        // set before firing) and how much incoming fire is pinning it down.
+        this.stationaryFor = 0;
+        this.suppression = 0;
+        this.pinned = false;
 
         // Hostile-only brain state, harmless on friendlies.
         this.ai = {
@@ -41,6 +54,7 @@ export class Unit {
             routeIndex: 0,
             contactTimer: 0,
             searchTimer: 0,
+            chaseTimer: 0,
             lastKnown: null,
             homeFacing: facing,
         };
@@ -74,24 +88,77 @@ export class Unit {
     takeDamage(amount) {
         if (!this.alive) return;
         this.hp -= amount;
-        if (this.hp <= 0) {
-            this.hp = 0;
-            this.alive = false;
-            this.stop();
-            this.target = null;
-            // The dropped weapon lands roughly where the unit was looking.
-            this.dropAngle = this.facing + (Math.random() - 0.5) * 1.4;
-            this.dropOffset = { x: Math.cos(this.dropAngle) * 22, y: Math.sin(this.dropAngle) * 22 };
+        if (this.hp > 0) return;
+
+        this.hp = 0;
+        this.alive = false;
+        this.stop();
+        this.target = null;
+        // The dropped weapon lands roughly where the unit was looking.
+        this.dropAngle = this.facing + (Math.random() - 0.5) * 1.4;
+        this.dropOffset = { x: Math.cos(this.dropAngle) * 22, y: Math.sin(this.dropAngle) * 22 };
+
+        // Squadmates go down rather than out, giving the medic a window.
+        if (this.isFriendly) {
+            this.downed = true;
+            this.bleedOut = DOWNED.bleedOut;
+            this.reviveProgress = 0;
         }
     }
 
+    heal(amount) {
+        if (!this.alive) return;
+        this.hp = Math.min(this.maxHp, this.hp + amount);
+    }
+
+    revive(hp) {
+        if (!this.downed) return;
+        this.downed = false;
+        this.alive = true;
+        this.hp = Math.min(this.maxHp, hp);
+        this.reviveProgress = 0;
+        this.dropOffset = null;
+        this.burstLeft = this.stats.weapon.burst;
+    }
+
+    addSuppression(amount) {
+        if (!this.alive) return;
+        this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
+    }
+
     update(dt, ctx) {
+        // Bleeding out is the only thing a downed unit does on its own.
+        if (this.downed) {
+            this.bleedOut -= dt;
+            if (this.bleedOut <= 0) {
+                this.downed = false;
+                this.reviveProgress = 0;
+            }
+            return;
+        }
         if (!this.alive) return;
 
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
+        this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
+        this.suppression = Math.max(0, this.suppression - (SUPPRESSION.decayPerSecond * dt) / 1000);
+        // Hysteresis, so a unit hovering at the threshold does not flicker
+        // between pinned and firing every frame.
+        if (this.suppression >= SUPPRESSION.threshold) this.pinned = true;
+        else if (this.suppression < SUPPRESSION.threshold * 0.4) this.pinned = false;
 
+        const startX = this.x;
+        const startY = this.y;
+        this.step(dt, ctx);
+
+        // Breaching or held in place still counts as being set, which is what
+        // the marksman's steady requirement reads.
+        const travelled = Math.hypot(this.x - startX, this.y - startY);
+        this.stationaryFor = travelled > 0.35 ? 0 : this.stationaryFor + dt;
+    }
+
+    step(dt, ctx) {
         if (this.breaching) {
             this.breaching.timer -= dt;
             this.facing = turnToward(this.facing, this.breaching.angle, this.stats.turnSpeed * dt / 1000);
@@ -155,6 +222,7 @@ export class Unit {
     }
 
     // Gentle shove so squadmates spread out instead of stacking on one pixel.
+    // Downed bodies are stepped over rather than pushed around.
     separate(others, ctx) {
         if (!this.alive) return;
         let pushX = 0;

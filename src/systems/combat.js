@@ -2,15 +2,19 @@
 // being told to; hostiles only shoot once their brain has flipped to ENGAGE.
 
 import { rectContains, solidRects, sandbagArcs, pointInSandbag } from '../level.js';
+import { SUPPRESSION } from '../config.js';
 
 const AIM_TOLERANCE = 0.2;      // rad of error allowed before the trigger is pulled
 const SUBSTEP = 8;              // px per collision substep, keeps tracers from tunnelling
+const BLAST_FRIENDLY_SCALE = 0.5;
+const EXPLOSION_TTL = 320;      // ms the detonation flash stays on screen
 
 export class CombatSystem {
     constructor(level, vision) {
         this.level = level;
         this.vision = vision;
         this.projectiles = [];
+        this.explosions = [];
         this.noises = [];
         this.blockers = solidRects(level);
         this.arcs = sandbagArcs(level);
@@ -28,12 +32,19 @@ export class CombatSystem {
         for (const unit of units) {
             if (!unit.alive) continue;
             this.acquire(unit, unit.isFriendly ? hostiles : friendlies);
-            if (unit.target) {
-                unit.aimAngle = Math.atan2(unit.target.y - unit.y, unit.target.x - unit.x);
-                if (this.mayFire(unit)) this.fire(unit, now);
-            }
+            if (!unit.target) continue;
+
+            unit.aimAngle = Math.atan2(unit.target.y - unit.y, unit.target.x - unit.x);
+            if (!this.mayFire(unit)) continue;
+            // A grenade is worth more than a burst when the target is far
+            // enough away and the squad is clear of the blast.
+            if (this.mayThrow(unit, friendlies)) this.throwGrenade(unit, now);
+            else this.fire(unit, now);
         }
+
         this.stepProjectiles(dt, units);
+        for (const blast of this.explosions) blast.ttl -= dt;
+        this.explosions = this.explosions.filter((blast) => blast.ttl > 0);
         this.noises = this.noises.filter((n) => now - n.time < 900);
     }
 
@@ -62,12 +73,60 @@ export class CombatSystem {
 
     mayFire(unit) {
         if (unit.breaching) return false;
+        if (unit.pinned) return false;                  // head down under fire
         if (unit.fireTimer > 0 || unit.burstGapTimer > 0) return false;
         // Hostiles wait for their reaction time; the AI raises this flag.
         if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
+        // The marksman has to plant before it can take the shot.
+        if (unit.stats.steadyTime && unit.stationaryFor < unit.stats.steadyTime) return false;
         let error = unit.aimAngle - unit.facing;
         error = Math.atan2(Math.sin(error), Math.cos(error));
         return Math.abs(error) <= AIM_TOLERANCE;
+    }
+
+    // Grenades are held back at knife range, when the charge is on cooldown, or
+    // whenever a squadmate is standing in the blast.
+    mayThrow(unit, friendlies) {
+        const grenade = unit.stats.grenade;
+        if (!grenade || unit.grenadesLeft <= 0 || unit.grenadeTimer > 0) return false;
+
+        const target = unit.target;
+        const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
+        if (dist < grenade.minRange) return false;
+
+        for (const mate of friendlies) {
+            if (mate === unit) continue;
+            if (Math.hypot(mate.x - target.x, mate.y - target.y) < grenade.radius * 0.9) return false;
+        }
+        return true;
+    }
+
+    throwGrenade(unit, now) {
+        const grenade = unit.stats.grenade;
+        const target = unit.target;
+        const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+        const muzzleX = unit.x + Math.cos(angle) * (unit.radius + 10);
+        const muzzleY = unit.y + Math.sin(angle) * (unit.radius + 10);
+
+        this.projectiles.push({
+            kind: 'grenade',
+            x: muzzleX,
+            y: muzzleY,
+            vx: Math.cos(angle) * grenade.speed,
+            vy: Math.sin(angle) * grenade.speed,
+            aim: { x: target.x, y: target.y },
+            radius: grenade.radius,
+            damage: grenade.damage,
+            team: unit.team,
+            owner: unit,
+            travelled: 0,
+            maxDist: Math.hypot(target.x - muzzleX, target.y - muzzleY),
+        });
+
+        unit.grenadesLeft -= 1;
+        unit.grenadeTimer = grenade.cooldown;
+        unit.fireTimer = Math.max(unit.fireTimer, 700);
+        this.noises.push({ x: unit.x, y: unit.y, team: unit.team, time: now });
     }
 
     fire(unit, now) {
@@ -86,6 +145,7 @@ export class CombatSystem {
                 vx: Math.cos(angle) * weapon.bulletSpeed,
                 vy: Math.sin(angle) * weapon.bulletSpeed,
                 damage: weapon.damage,
+                suppression: unit.stats.suppressionPerHit || 0,
                 team: unit.team,
                 owner: unit,
                 travelled: 0,
@@ -120,6 +180,17 @@ export class CombatSystem {
                 bullet.x += totalX / steps;
                 bullet.y += totalY / steps;
                 bullet.travelled += distance / steps;
+
+                if (bullet.kind === 'grenade') {
+                    // Grenades sail over heads and detonate where they land, or
+                    // against the first wall they meet.
+                    if (bullet.travelled >= bullet.maxDist || this.hitsGeometry(bullet.x, bullet.y)) {
+                        this.detonate(bullet, units);
+                        dead = true;
+                    }
+                    continue;
+                }
+
                 if (bullet.travelled > bullet.maxDist) { dead = true; break; }
                 if (this.hitsGeometry(bullet.x, bullet.y)) { dead = true; break; }
 
@@ -127,10 +198,22 @@ export class CombatSystem {
                     if (!unit.alive || unit.team === bullet.team) continue;
                     const dx = unit.x - bullet.x;
                     const dy = unit.y - bullet.y;
-                    if (dx * dx + dy * dy <= unit.radius * unit.radius) {
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq <= unit.radius * unit.radius) {
+                        if (bullet.suppression) unit.addSuppression(bullet.suppression);
                         unit.takeDamage(bullet.damage);
                         dead = true;
                         break;
+                    }
+                    // A round cracking past is nearly as good as a hit for
+                    // keeping someone's head down — but count each round once,
+                    // not once per collision substep.
+                    if (bullet.suppression && distSq <= SUPPRESSION.nearMissRadius * SUPPRESSION.nearMissRadius) {
+                        if (!bullet.grazed) bullet.grazed = new Set();
+                        if (!bullet.grazed.has(unit.id)) {
+                            bullet.grazed.add(unit.id);
+                            unit.addSuppression(bullet.suppression * 0.5);
+                        }
                     }
                 }
             }
@@ -138,6 +221,23 @@ export class CombatSystem {
         }
 
         this.projectiles = alive;
+    }
+
+    // Blast damage falls off linearly to the edge of the radius, and only walls
+    // between the burst and a body spare it.
+    detonate(grenade, units) {
+        for (const unit of units) {
+            if (!unit.alive) continue;
+            const dist = Math.hypot(unit.x - grenade.x, unit.y - grenade.y);
+            if (dist > grenade.radius) continue;
+            if (!this.vision.hasLineOfSight(grenade.x, grenade.y, unit.x, unit.y)) continue;
+
+            const falloff = 1 - dist / grenade.radius;
+            const scale = unit.team === grenade.team ? BLAST_FRIENDLY_SCALE : 1;
+            unit.takeDamage(grenade.damage * falloff * scale);
+            unit.addSuppression(SUPPRESSION.threshold * falloff);
+        }
+        this.explosions.push({ x: grenade.x, y: grenade.y, radius: grenade.radius, ttl: EXPLOSION_TTL });
     }
 
     hitsGeometry(x, y) {

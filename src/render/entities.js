@@ -4,12 +4,20 @@
 // Depth order matters: corpses and doors sit *under* the fog so they stay hidden
 // in rooms nobody has entered, while live units and order lines sit above it.
 
-import { COLORS } from '../config.js';
+import { COLORS, SUPPRESSION, DOWNED } from '../config.js';
 
-const GUN = {
+// Each class reads as a different silhouette from above, the way the reference
+// art distinguishes its units: barrel length, thickness, and a bipod for the MG.
+export const GUN = {
     operator: { length: 38, width: 7 },
     breacher: { length: 27, width: 10 },
+    grenadier: { length: 26, width: 13 },
+    medic: { length: 24, width: 7, icon: 'cross' },
+    marksman: { length: 52, width: 5 },
+    machinegunner: { length: 46, width: 10, bipod: true },
     hostile: { length: 34, width: 7 },
+    hostileShotgun: { length: 25, width: 10 },
+    hostileHeavy: { length: 42, width: 9 },
 };
 
 export class EntityRenderer {
@@ -50,7 +58,7 @@ export class EntityRenderer {
     }
 
     draw(state) {
-        const { units, projectiles, vision, friendlies, selected } = state;
+        const { units, projectiles, explosions, vision, friendlies, selected } = state;
         const ground = this.groundLayer;
         const top = this.unitLayer;
         const overlay = this.overlayLayer;
@@ -61,6 +69,8 @@ export class EntityRenderer {
         for (const unit of units) {
             if (unit.alive) continue;
             drawCorpse(ground, unit);
+            // A casualty is still savable, so it gets a live marker above the fog.
+            if (unit.downed) drawDownedMarker(overlay, unit, state.time);
         }
 
         for (const unit of units) {
@@ -75,12 +85,23 @@ export class EntityRenderer {
             if (unit.selected) drawSelection(overlay, unit);
             if (unit.hp < unit.maxHp) drawHealthBar(overlay, unit);
             if (unit.breaching) drawBreachRing(overlay, unit);
+            if (unit.reviving) drawReviveLink(overlay, unit, unit.reviving);
+            if (unit.pinned) drawPinned(overlay, unit);
         }
 
         for (const bullet of projectiles) {
             if (!vision.canAnySee(friendlies, bullet.x, bullet.y)) continue;
+            if (bullet.kind === 'grenade') {
+                drawGrenade(top, bullet);
+                continue;
+            }
             top.lineStyle(3.5, COLORS.gun, 0.95);
             top.lineBetween(bullet.x, bullet.y, bullet.x - bullet.vx * 0.012, bullet.y - bullet.vy * 0.012);
+        }
+
+        for (const blast of explosions) {
+            if (!vision.canAnySee(friendlies, blast.x, blast.y)) continue;
+            drawExplosion(top, blast);
         }
 
         for (const unit of selected) {
@@ -103,6 +124,14 @@ function drawUnit(g, unit) {
     const cy = unit.y + sin * (unit.radius * 0.55) + cos * (unit.radius * 0.3);
     g.fillStyle(COLORS.gun, 1);
     fillRotatedRect(g, cx, cy, gun.length, gun.width, unit.facing);
+
+    if (gun.bipod) {
+        // Two stubs near the muzzle so the MG reads at a glance.
+        const bx = cx + cos * gun.length * 0.34;
+        const by = cy + sin * gun.length * 0.34;
+        fillRotatedRect(g, bx, by, 4, 20, unit.facing);
+    }
+    if (gun.icon === 'cross') drawCrossIcon(g, unit);
 
     if (unit.muzzleFlash > 0) {
         const mx = unit.x + cos * (unit.radius + gun.length * 0.7);
@@ -133,6 +162,76 @@ function drawCorpse(g, unit) {
     g.lineStyle(7, COLORS.gun, 1);
     g.lineBetween(unit.x - r, unit.y - r, unit.x + r, unit.y + r);
     g.lineBetween(unit.x + r, unit.y - r, unit.x - r, unit.y + r);
+}
+
+// The medic's red cross, straight off the reference art.
+export function drawCrossIcon(g, unit, scale = 1) {
+    const arm = 9 * scale;
+    const thick = 3.4 * scale;
+    g.fillStyle(0xffffff, 0.95);
+    g.fillCircle(unit.x, unit.y, arm * 0.95);
+    g.fillStyle(0xe02020, 1);
+    g.fillRect(unit.x - arm * 0.62, unit.y - thick / 2, arm * 1.24, thick);
+    g.fillRect(unit.x - thick / 2, unit.y - arm * 0.62, thick, arm * 1.24);
+}
+
+function drawGrenade(g, bullet) {
+    g.fillStyle(0x000000, 0.25);
+    g.fillCircle(bullet.x + 4, bullet.y + 6, 6);
+    g.fillStyle(0x2f3a2a, 1);
+    g.fillCircle(bullet.x, bullet.y, 6);
+    g.lineStyle(2, 0xffe066, 0.9);
+    g.strokeCircle(bullet.x, bullet.y, 8.5);
+}
+
+function drawExplosion(g, blast) {
+    const t = Math.max(0, Math.min(1, blast.ttl / 320));
+    const radius = blast.radius * (1.05 - t * 0.35);
+    g.fillStyle(0xffd24a, 0.28 * t);
+    g.fillCircle(blast.x, blast.y, radius);
+    g.lineStyle(5 * t + 1, 0xff8a1f, 0.85 * t);
+    g.strokeCircle(blast.x, blast.y, radius);
+    g.fillStyle(0xfff2b0, 0.85 * t);
+    g.fillCircle(blast.x, blast.y, radius * 0.32 * t);
+}
+
+// Casualty marker: a pulsing ring that shrinks as the unit bleeds out, plus the
+// revive progress arc once a medic is working on them.
+function drawDownedMarker(g, unit, time) {
+    const pulse = 0.5 + 0.5 * Math.sin((time || 0) * 0.006);
+    const life = Math.max(0, Math.min(1, unit.bleedOut / DOWNED.bleedOut));
+    g.lineStyle(2.5, 0xffffff, 0.35 + pulse * 0.45);
+    g.strokeCircle(unit.x, unit.y, unit.radius + 8 + pulse * 3);
+    g.lineStyle(4, 0xffd24a, 0.9);
+    g.beginPath();
+    g.arc(unit.x, unit.y, unit.radius + 14, -Math.PI / 2, -Math.PI / 2 + life * Math.PI * 2);
+    g.strokePath();
+
+    if (unit.reviveProgress > 0) {
+        const progress = Math.min(1, unit.reviveProgress / (unit.reviveTotal || 1));
+        g.lineStyle(4, 0x7df07d, 0.95);
+        g.beginPath();
+        g.arc(unit.x, unit.y, unit.radius + 20, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+        g.strokePath();
+    }
+}
+
+function drawReviveLink(g, medic, casualty) {
+    g.lineStyle(2, 0x7df07d, 0.75);
+    g.lineBetween(medic.x, medic.y, casualty.x, casualty.y);
+}
+
+// Pinned hostiles get a chevron cluster: they are there, they just cannot answer.
+function drawPinned(g, unit) {
+    const ratio = Math.min(1, unit.suppression / SUPPRESSION.max);
+    g.lineStyle(3, 0xffd24a, 0.9);
+    for (let i = 0; i < 3; i++) {
+        const r = unit.radius + 7 + i * 4;
+        const spread = 0.5 + ratio * 0.35;
+        g.beginPath();
+        g.arc(unit.x, unit.y, r, -Math.PI / 2 - spread, -Math.PI / 2 + spread);
+        g.strokePath();
+    }
 }
 
 function drawGhost(g, point) {
