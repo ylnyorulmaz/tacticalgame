@@ -4,6 +4,7 @@
 import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED } from '../config.js';
 import { rectContains } from '../level.js';
 import { makeOrder, paceScale, staysSet } from './orders.js';
+import { settings } from './settings.js';
 
 let nextId = 1;
 
@@ -46,6 +47,16 @@ export class Unit {
         this.recoil = 0;
         this.grenadesLeft = this.stats.grenade ? this.stats.grenade.count : 0;
         this.grenadeTimer = 0;
+
+        // Magazines, but only if the player asked for them on the menu. With the
+        // switch off these are Infinity, which turns every ammo check below into
+        // a no-op rather than forking the firing code down a second path.
+        const weapon = this.stats.weapon;
+        const finite = settings.ammo && !!weapon.magazine;
+        this.magSize = finite ? weapon.magazine : Infinity;
+        this.mag = this.magSize;
+        this.reserve = finite ? weapon.magazine * (weapon.spare || 0) : Infinity;
+        this.reloadTimer = 0;
 
         // How long this unit has been standing still (the marksman needs to be
         // set before firing) and how much incoming fire is pinning it down.
@@ -131,6 +142,25 @@ export class Unit {
         this.burstLeft = this.stats.weapon.burst;
     }
 
+    // Out of rounds and out of magazines: this weapon is finished for the
+    // mission, which the roster reports so it is never a silent failure.
+    get isDry() {
+        return this.mag <= 0 && this.reserve <= 0;
+    }
+
+    startReload() {
+        if (this.reloadTimer > 0 || this.reserve <= 0 || this.mag >= this.magSize) return false;
+        this.reloadTimer = this.stats.weapon.reloadTime || 2000;
+        return true;
+    }
+
+    finishReload() {
+        const taken = Math.min(this.magSize - this.mag, this.reserve);
+        this.mag += taken;
+        this.reserve -= taken;
+        this.reloadTimer = 0;
+    }
+
     addSuppression(amount) {
         if (!this.alive) return;
         this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
@@ -152,6 +182,10 @@ export class Unit {
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
+        if (this.reloadTimer > 0) {
+            this.reloadTimer -= dt;
+            if (this.reloadTimer <= 0) this.finishReload();
+        }
         this.recoil = Math.max(0, this.recoil - dt / 90);   // gun slides back home
         this.suppression = Math.max(0, this.suppression - (SUPPRESSION.decayPerSecond * dt) / 1000);
         // Hysteresis, so a unit hovering at the threshold does not flicker

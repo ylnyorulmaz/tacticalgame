@@ -25,7 +25,11 @@ export class Roster {
                 color,
                 fontStyle: 'bold',
             }).setDepth(41).setShadow(0, 1, '#000000aa', 3);
-            this.labels.push({ name: make(13, '#ffffff'), state: make(11, '#ffd24a') });
+            this.labels.push({
+                name: make(13, '#ffffff'),
+                state: make(11, '#ffd24a'),
+                ammo: make(11, '#cfe9ff').setOrigin(1, 0),
+            });
         }
     }
 
@@ -48,10 +52,12 @@ export class Roster {
         this.slots.forEach((slot, i) => {
             this.labels[i].name.setPosition(slot.x + 40, slot.y + 8);
             this.labels[i].state.setPosition(slot.x + 40, slot.y + 36);
+            this.labels[i].ammo.setPosition(slot.x + slot.width - 8, slot.y + 8);
         });
         for (let i = squad.length; i < this.labels.length; i++) {
             this.labels[i].name.setText('');
             this.labels[i].state.setText('');
+            this.labels[i].ammo.setText('');
         }
     }
 
@@ -119,6 +125,16 @@ export class Roster {
 
             labels.state.setText(stateLabel(unit));
             labels.state.setColor(stateColor(unit));
+
+            // Rounds in the magazine and magazines left. Blank when the player
+            // turned ammo off, since then it would only ever read ∞.
+            if (dead || !Number.isFinite(unit.magSize)) {
+                labels.ammo.setText('');
+            } else {
+                const mags = Math.ceil(unit.reserve / unit.magSize);
+                labels.ammo.setText(`${unit.mag}·${mags}`);
+                labels.ammo.setColor(unit.isDry ? '#ff6b6b' : unit.mag === 0 ? '#ffd24a' : '#cfe9ff');
+            }
         });
     }
 
@@ -127,6 +143,7 @@ export class Roster {
         for (const label of this.labels) {
             label.name.destroy();
             label.state.destroy();
+            label.ammo.destroy();
         }
     }
 }
@@ -137,6 +154,8 @@ function stateLabel(unit) {
     if (unit.breaching) return 'BREACHING';
     if (unit.reviving) return 'REVIVING';
     if (unit.pinned) return 'PINNED';
+    if (unit.reloadTimer > 0) return 'RELOADING';
+    if (unit.isDry) return 'DRY';
     if (unit.order.stackAt) return unit.path ? 'MOVING TO STACK' : 'STACKED';
     if (unit.order.suppressAt) return 'SUPPRESSING';
     if (unit.order.stance === 'hold') return 'WEAPONS TIGHT';
@@ -149,7 +168,8 @@ function stateLabel(unit) {
 function stateColor(unit) {
     if (!unit.alive && !unit.downed) return '#8b9a92';
     if (unit.downed) return '#ff6b6b';
-    if (unit.pinned) return '#ff6b6b';
+    if (unit.pinned || unit.isDry) return '#ff6b6b';
+    if (unit.reloadTimer > 0) return '#ffd24a';
     if (unit.order.stackAt) return '#7fd8ff';
     if (unit.order.suppressAt || unit.order.stance === 'hold') return '#ffd24a';
     if (unit.inCover > 0.35) return '#7df07d';

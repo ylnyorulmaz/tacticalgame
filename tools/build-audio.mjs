@@ -358,6 +358,81 @@ const BANK = {
             { kind: 'osc', type: 'triangle', freq: [784, 784], duration: 0.45, attack: 0.01, decay: 2.5, gain: 0.55, delay: 0.34 },
         ],
     },
+    // A suppressed weapon: the crack is gone and what is left is the action
+    // working. Quiet enough that the alarm rules treat it as a local noise only.
+    suppressed: {
+        takes: 3,
+        drive: 1.2,
+        reverb: { decay: 0.22, wet: 0.12, tailSeconds: 0.16 },
+        layers: [
+            { kind: 'noise', filter: 'lowpass', freq: [900, 190], q: 0.8, duration: 0.1, attack: 0.001, decay: 11, gain: 0.55 },
+            { kind: 'osc', type: 'sine', freq: [180, 70], duration: 0.09, decay: 12, gain: 0.35 },
+            { kind: 'noise', filter: 'bandpass', freq: [2600, 2100], q: 1.4, duration: 0.07, decay: 16, gain: 0.22, delay: 0.03 },
+        ],
+    },
+    // Magazine out, magazine in, bolt home — three mechanical events in one clip.
+    reload: {
+        takes: 2,
+        reverb: { decay: 0.25, wet: 0.14, tailSeconds: 0.2 },
+        layers: [
+            { kind: 'noise', filter: 'bandpass', freq: [2200, 1800], q: 2.2, duration: 0.04, attack: 0.001, decay: 22, gain: 0.32 },
+            { kind: 'osc', type: 'square', freq: [220, 120], duration: 0.06, decay: 16, gain: 0.22, delay: 0.08 },
+            { kind: 'noise', filter: 'bandpass', freq: [1500, 900], q: 1.6, duration: 0.08, decay: 14, gain: 0.38, delay: 0.34 },
+            { kind: 'osc', type: 'square', freq: [300, 150], duration: 0.05, decay: 18, gain: 0.28, delay: 0.36 },
+            { kind: 'noise', filter: 'highpass', freq: [2800, 2000], duration: 0.06, decay: 18, gain: 0.34, delay: 0.56 },
+        ],
+    },
+    // Smoke: a small pop, then a long hiss as the canister burns.
+    smokePop: {
+        takes: 2,
+        reverb: { decay: 0.4, wet: 0.24, tailSeconds: 0.5 },
+        layers: [
+            { kind: 'noise', filter: 'bandpass', freq: [1700, 800], q: 1.1, duration: 0.09, attack: 0.001, decay: 13, gain: 0.5 },
+            { kind: 'osc', type: 'sine', freq: [260, 110], duration: 0.1, decay: 12, gain: 0.3 },
+            { kind: 'noise', filter: 'highpass', freq: [3200, 2600], duration: 0.85, attack: 0.05, decay: 2.2, gain: 0.3, delay: 0.06 },
+        ],
+    },
+    // Flashbang: all crack and ring, almost no body.
+    flashBang: {
+        takes: 2,
+        drive: 3.2,
+        reverb: { decay: 0.6, wet: 0.4, tailSeconds: 0.8 },
+        layers: [
+            { kind: 'noise', filter: 'highpass', freq: [2200, 1400], duration: 0.3, attack: 0.001, decay: 7, gain: 1 },
+            { kind: 'osc', type: 'square', freq: [900, 300], duration: 0.12, decay: 10, gain: 0.5 },
+            { kind: 'osc', type: 'sine', freq: [4200, 3600], duration: 0.9, attack: 0.02, decay: 1.6, gain: 0.22, delay: 0.08 },
+        ],
+    },
+    // A breaching charge: sharper and shorter than a grenade, with the door in it.
+    charge: {
+        takes: 2,
+        drive: 3,
+        reverb: { decay: 0.55, wet: 0.38, tailSeconds: 0.7 },
+        layers: [
+            { kind: 'noise', filter: 'lowpass', freq: [1500, 180], q: 0.8, duration: 0.34, attack: 0.001, decay: 6, gain: 1 },
+            { kind: 'osc', type: 'square', freq: [150, 40], duration: 0.28, decay: 7, gain: 0.7 },
+            { kind: 'noise', filter: 'bandpass', freq: [2600, 1200], q: 0.9, duration: 0.35, decay: 5, gain: 0.4, delay: 0.04 },
+        ],
+    },
+    // The garrison waking up: a two-tone call, deliberately unpleasant.
+    alarm: {
+        takes: 1,
+        drive: 1.6,
+        reverb: { decay: 0.6, wet: 0.34, tailSeconds: 0.7 },
+        layers: [
+            { kind: 'osc', type: 'sawtooth', freq: [520, 520], duration: 0.28, attack: 0.01, decay: 3, gain: 0.5 },
+            { kind: 'osc', type: 'sawtooth', freq: [392, 392], duration: 0.34, attack: 0.01, decay: 2.6, gain: 0.5, delay: 0.26 },
+        ],
+    },
+    // An objective ticking over: short, bright, clearly not the win sting.
+    objective: {
+        takes: 1,
+        reverb: { decay: 0.4, wet: 0.3, tailSeconds: 0.45 },
+        layers: [
+            { kind: 'osc', type: 'triangle', freq: [880, 880], duration: 0.13, attack: 0.005, decay: 5, gain: 0.45 },
+            { kind: 'osc', type: 'triangle', freq: [1318, 1318], duration: 0.26, attack: 0.005, decay: 3.4, gain: 0.4, delay: 0.11 },
+        ],
+    },
     lose: {
         takes: 1,
         drive: 1.4,

@@ -62,6 +62,13 @@ automatic offline fallback, so the game still boots without a network.
 The game opens on a map select. Each card's thumbnail is drawn from that map's
 own data, so it always matches what you are about to play.
 
+Under the cards is one switch: **Ammo & reloads** (`T`, or click it). On, every
+weapon has a magazine, a finite pouch of spares and real reload downtime — the
+machine gunner's hundred-round belt costs four seconds to change, a hostile
+reloading is a window to move, and suppressive fire stops being free. Off,
+weapons never run dry, which is how the game played before the switch existed.
+The choice is remembered in `localStorage`.
+
 | Map | Plays like |
 | --- | --- |
 | **Compound** | Three rooms, two doors, one way in. The starter: breach and clear. |

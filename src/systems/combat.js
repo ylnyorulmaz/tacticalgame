@@ -94,6 +94,7 @@ export class CombatSystem {
         if (unit.breaching) return false;
         if (unit.pinned) return false;                  // head down under fire
         if (unit.fireTimer > 0 || unit.burstGapTimer > 0) return false;
+        if (unit.reloadTimer > 0 || unit.mag <= 0) return false;   // empty or reloading
         if (unit.order.stance === 'hold') return false; // told to hold fire
         if (isSprinting(unit)) return false;            // weapon is down while running
         // The marksman has to plant before it can take the shot.
@@ -250,6 +251,12 @@ export class CombatSystem {
         unit.muzzleFlash = 95;
         unit.recoil = 1;
         unit.burstLeft -= 1;
+        // One round per trigger pull, buckshot included: a shotgun shell throws
+        // several pellets but costs one shell.
+        unit.mag -= 1;
+        if (unit.mag <= 0 && unit.startReload()) {
+            this.events.push({ type: 'reload', kind: 'reload', x: unit.x, y: unit.y, unit: unit.id });
+        }
         if (unit.burstLeft <= 0) {
             unit.burstLeft = weapon.burst;
             unit.burstGapTimer = weapon.burstGap;

@@ -12,7 +12,8 @@ import { CombatSystem } from '../src/systems/combat.js';
 import { Unit, doorAtPoint } from '../src/systems/units.js';
 import { updateHostile } from '../src/systems/ai.js';
 import * as orders from '../src/systems/orders.js';
-import { SUPPRESSION } from '../src/config.js';
+import { setSetting } from '../src/systems/settings.js';
+import { SUPPRESSION, UNIT_CLASSES } from '../src/config.js';
 
 export const name = 'tactics';
 
@@ -99,6 +100,56 @@ export function run(t) {
     stackAndBreach(t);
     arrivalFacing(t);
     aimedThrow(t);
+    ammo(t);
+}
+
+// The magazine switch: on, a weapon runs dry and costs real time to reload; off,
+// every ammo check is a no-op and nothing changes from how the game used to play.
+function ammo(t) {
+    const shotgun = UNIT_CLASSES.breacher.weapon;
+
+    setSetting('ammo', true);
+    const w = world();
+    const shooter = w.add('breacher', OPEN.x, OPEN.y);
+    const victim = w.add('hostile', OPEN.x + 150, OPEN.y);
+    // Neither of them is allowed to die: this is a test about magazines, and a
+    // casualty on either side would end the exchange before it proves anything.
+    for (const u of [shooter, victim]) {
+        u.maxHp = 1e6;
+        u.hp = 1e6;
+    }
+    t.equal(shooter.mag, shotgun.magazine, 'a unit deploys with a full magazine');
+
+    const fired = w.countShots(4200, shooter);
+    t.equal(fired, shotgun.magazine, `it fires exactly one magazine and stops (${fired})`);
+    t.ok(shooter.reloadTimer > 0, 'running dry starts a reload');
+    t.equal(shooter.mag, 0, 'the magazine is empty until the reload finishes');
+
+    // Nothing comes out during the reload itself, and a magazine leaves the
+    // pouch when it finishes.
+    const left = shooter.reloadTimer;
+    t.equal(w.countShots(left - 100, shooter), 0, 'nothing fires during the reload');
+    w.run(300);
+    t.ok(shooter.mag > 0, 'the reload puts a fresh magazine in');
+    t.equal(
+        shooter.reserve,
+        shotgun.magazine * (shotgun.spare - 1),
+        'and takes it out of the pouch',
+    );
+    t.ok(w.countShots(1500, shooter) > 0, 'and the weapon works again');
+
+    // With the switch off there is no magazine to empty.
+    setSetting('ammo', false);
+    const free = world();
+    const endless = free.add('breacher', OPEN.x, OPEN.y);
+    const other = free.add('hostile', OPEN.x + 150, OPEN.y);
+    other.maxHp = 1e6;
+    other.hp = 1e6;
+    t.equal(endless.magSize, Infinity, 'ammo off means no magazine at all');
+    const many = free.countShots(6000, endless);
+    t.ok(many > shotgun.magazine, `it never stops to reload (${many} rounds)`);
+    t.equal(endless.reloadTimer, 0, 'and never reloads');
+    setSetting('ammo', true);
 }
 
 function holdFire(t) {
