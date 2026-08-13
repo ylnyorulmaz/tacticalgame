@@ -1,1 +1,96 @@
-# tacticalgame
+# Tactical CQB — top-down squad prototype
+
+A browser game about clearing a building with a four-man squad: click to select,
+right-click to move, and watch line of sight peel the fog off the map one room at
+a time. Pausable real-time — hit `Space`, plan, unpause, watch it play out.
+
+Built with Phaser 3. No build step, no bundler, no npm install.
+
+![Squad breaching the front door](docs/screenshot.png)
+
+## Running it
+
+The game is plain static files, but it uses ES modules, so it needs to be served
+over HTTP (opening `index.html` from the filesystem will not work):
+
+```bash
+python3 -m http.server 8000
+# or: npx http-server -p 8000
+```
+
+Then open <http://localhost:8000>. It also works as-is on GitHub Pages or any
+static host.
+
+Phaser is loaded from a CDN with a vendored copy in `vendor/phaser.min.js` as an
+automatic offline fallback, so the game still boots without a network.
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| Left click | Select a unit |
+| Left drag | Box-select several units |
+| Right click | Move order (units spread into a loose formation) |
+| Shift + right click | Queue another waypoint |
+| `Space` | Pause / unpause — orders can still be issued while paused |
+| `Tab` | Cycle through the squad |
+| `1`–`4` | Select a specific unit (hold Shift to add) |
+| `Ctrl`+`A` | Select the whole squad |
+| `Esc` | Clear selection |
+| `W A S D` / arrows | Pan the camera |
+| Middle-drag / wheel | Pan / zoom |
+| `R` | Restart the mission |
+
+## What is in the mission
+
+- **Two unit types.** *Operator* — carbine, long reach, balanced. *Breacher* —
+  shotgun, close-range punch, tougher, and forces doors in about half the time.
+  The bottom-right card shows the selected unit's Speed / Firepower /
+  Survivability / Range, read straight off the same stat table the simulation uses.
+- **Click-to-move with pathfinding.** A* over a walkability grid, then a
+  string-pull pass so units walk clean diagonals instead of staircases. Units
+  slide along walls rather than sticking to them.
+- **Heading.** Every unit's rifle points where it is looking: along its path when
+  moving, at its target when engaging.
+- **Fog of war and line of sight.** A visibility polygon is raycast per unit
+  against wall corners, so walls and shut doors throw real shadows. Ground the
+  squad has already cleared stays dimly remembered; ground it has never seen
+  stays dark. Hostiles are only drawn while somebody can actually see them, and
+  they leave a faint "last known position" ghost when contact is lost.
+- **Doors.** Both interior doors start shut and block sight and movement. Walk a
+  unit into one and it breaches it open, flooding the room with light — and
+  usually with a firefight.
+- **Hostiles.** Four of them: two static sentries watching fixed arcs, one
+  patrolling the back room, one on the sandbag position outside. Each runs
+  PATROL/IDLE → ALERT → ENGAGE → SEARCH, using the *same* line-of-sight test the
+  player's fog uses, so if you cannot see them, they cannot see you. Gunfire
+  within earshot pulls them off their post to investigate.
+- **Combat.** Fire is automatic on anything visible and in range. Bullets are
+  simulated tracers that stop on walls, wrecks and sandbags. At zero HP a unit
+  drops its weapon and is marked with a black X.
+- **Pausable real-time.** `Space` freezes the simulation but not the interface:
+  select units, issue orders, and see them drawn as dashed plans, then unpause.
+
+## Layout
+
+```
+index.html              page shell, Phaser CDN tag + offline fallback
+vendor/phaser.min.js    vendored engine for offline play
+src/main.js             Phaser boot
+src/config.js           tuning: stats, weapons, colours, fog, AI timings
+src/level.js            the map: walls, doors, props, trees, spawns, patrols
+src/scenes/GameScene.js per-frame orchestration, orders, pause, outcome
+src/systems/nav.js      walk grid, A*, path smoothing
+src/systems/vision.js   line of sight, visibility polygons, fog layers
+src/systems/units.js    unit state, movement, breaching, damage
+src/systems/combat.js   weapons, tracers, target acquisition
+src/systems/ai.js       hostile state machine
+src/systems/input.js    selection, orders, camera
+src/render/terrain.js   baked scenery: grass, grid, trees, building, props
+src/render/entities.js  units, corpses, doors, tracers, order lines
+src/render/hud.js       unit card, mission status, pause and outcome overlays
+```
+
+Two knobs worth knowing about: `src/config.js` holds every gameplay number in one
+place, and `?renderer=canvas` forces Phaser's canvas backend (the fog has a
+separate code path there, since inverted geometry masks are WebGL-only).
