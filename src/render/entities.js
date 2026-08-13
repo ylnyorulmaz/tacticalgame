@@ -87,6 +87,10 @@ export class EntityRenderer {
             if (unit.breaching) drawBreachRing(overlay, unit);
             if (unit.reviving) drawReviveLink(overlay, unit, unit.reviving);
             if (unit.pinned) drawPinned(overlay, unit);
+            if (unit.inCover > 0.35) drawCoverMark(overlay, unit);
+            if (unit.lastHitAt && state.time - unit.lastHitAt < 700) {
+                drawHitDirection(overlay, unit, (state.time - unit.lastHitAt) / 700);
+            }
         }
 
         for (const bullet of projectiles) {
@@ -243,6 +247,24 @@ function drawPinned(g, unit) {
         g.arc(unit.x, unit.y, r, -Math.PI / 2 - spread, -Math.PI / 2 + spread);
         g.strokePath();
     }
+}
+
+// Where the last round came from, so a squad taking fire from an unseen angle
+// still tells you which way to look.
+function drawHitDirection(g, unit, t) {
+    const from = (unit.lastHitAngle || 0) + Math.PI;   // back along the bullet
+    g.lineStyle(4, 0xff4d4d, 0.9 * (1 - t));
+    g.beginPath();
+    g.arc(unit.x, unit.y, unit.radius + 13, from - 0.5, from + 0.5);
+    g.strokePath();
+}
+
+// A quiet bracket under a unit that is actually using cover.
+function drawCoverMark(g, unit) {
+    g.lineStyle(3, 0x7df07d, 0.35 + unit.inCover * 0.5);
+    g.beginPath();
+    g.arc(unit.x, unit.y, unit.radius + 5, Math.PI * 0.15, Math.PI * 0.85);
+    g.strokePath();
 }
 
 function drawGhost(g, point) {

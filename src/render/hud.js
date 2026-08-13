@@ -5,6 +5,8 @@
 import { VIEW, COLORS, UNIT_CLASSES } from '../config.js';
 import { drawCrossIcon } from './entities.js';
 import { GUN, drawWeapon } from './weapons.js';
+import { Roster } from './roster.js';
+import { Minimap } from './minimap.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
 const BLOCKS = 10;
@@ -20,6 +22,25 @@ export class HudScene extends Phaser.Scene {
     create() {
         this.game_ = this.scene.get('game');
         this.gfx = this.add.graphics();
+        this.roster = new Roster(this);
+        this.minimapLevel = this.game_.level;
+        this.minimap = new Minimap(this, this.minimapLevel);
+        this.feedLabels = [];
+
+        // Clicks that land on HUD furniture must not also order the squad into a
+        // wall; GameScene's input controller asks this before acting.
+        this.input.on('pointerdown', (pointer) => {
+            const unit = this.roster.unitAt(pointer.x, pointer.y);
+            if (unit && unit.alive) {
+                this.game_.selectUnits([unit]);
+                this.game_.audio.play('select');
+                return;
+            }
+            if (this.minimap.contains(pointer.x, pointer.y)) {
+                const world = this.minimap.toWorld(pointer.x, pointer.y);
+                this.game_.cameras.main.centerOn(world.x, world.y);
+            }
+        });
 
         const label = (x, y, size, origin = 0, color = '#ffffff') =>
             this.add.text(x, y, '', {
@@ -51,6 +72,16 @@ export class HudScene extends Phaser.Scene {
 
         this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
 
+        // Event feed lines, newest at the top.
+        for (let i = 0; i < 5; i++) {
+            this.feedLabels.push(this.add.text(0, 0, '', {
+                fontFamily: '"Trebuchet MS", "Segoe UI", Arial, sans-serif',
+                fontSize: '14px',
+                color: '#ffffff',
+                fontStyle: 'bold',
+            }).setOrigin(1, 0).setShadow(0, 1, '#000000aa', 3));
+        }
+
         this.scale.on('resize', this.layout, this);
         this.layout();
     }
@@ -68,6 +99,15 @@ export class HudScene extends Phaser.Scene {
         this.pauseText.setPosition(w / 2, 22);
         this.outcomeText.setPosition(w / 2, h / 2 - 40);
         this.outcomeHint.setPosition(w / 2, h / 2 + 20);
+
+        if (this.minimap) this.minimap.layout();
+        this.feedLabels.forEach((label, i) => label.setPosition(w - 20, 210 + i * 19));
+        if (this.roster && this.game_.squad) this.roster.layout(this.game_.squad);
+    }
+
+    // Screen regions the mission must not receive clicks through.
+    hitsUi(x, y) {
+        return this.roster.contains(x, y) || this.minimap.contains(x, y);
     }
 
     update() {
@@ -85,7 +125,23 @@ export class HudScene extends Phaser.Scene {
         );
         this.pauseText.setText(state.paused ? '❚❚  PAUSED — issue orders, then press SPACE' : '');
 
+        // The HUD outlives a mission restart, so it has to notice a new level.
+        if (this.game_.level !== this.minimapLevel) {
+            this.minimap.destroy();
+            this.minimapLevel = this.game_.level;
+            this.minimap = new Minimap(this, this.minimapLevel);
+            this.minimap.layout();
+        }
+
         this.drawCard(state, w, h);
+        this.roster.draw(this.game_.squad);
+        this.minimap.draw({
+            squad: this.game_.squad,
+            hostiles: this.game_.hostiles,
+            vision: this.game_.vision,
+            camera: this.game_.cameras.main,
+        });
+        this.drawFeed(state.feed || []);
 
         if (state.outcome) {
             this.gfx.fillStyle(0x000000, 0.55);
@@ -98,6 +154,22 @@ export class HudScene extends Phaser.Scene {
             this.outcomeText.setText('');
             this.outcomeHint.setText('');
         }
+    }
+
+    // Newest first, fading out as each entry ages.
+    drawFeed(feed) {
+        const now = this.time.now;
+        this.feedLabels.forEach((label, i) => {
+            const entry = feed[i];
+            if (!entry) {
+                label.setText('');
+                return;
+            }
+            const age = now - entry.at;
+            label.setText(entry.text);
+            label.setColor(entry.color || '#ffffff');
+            label.setAlpha(Math.max(0, 1 - age / 4200));
+        });
     }
 
     drawCard(state, w, h) {

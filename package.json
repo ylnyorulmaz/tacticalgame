@@ -1,0 +1,15 @@
+{
+  "name": "tactical-cqb",
+  "version": "1.0.0",
+  "description": "Top-down CQB squad tactics in the browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server -p 8000 -c-1 .",
+    "test": "node test/run.mjs",
+    "build:audio": "node tools/build-audio.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}

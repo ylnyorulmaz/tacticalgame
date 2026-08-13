@@ -10,6 +10,7 @@ import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
+import { updateCover } from '../systems/cover.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
@@ -30,6 +31,7 @@ export class GameScene extends Phaser.Scene {
         this.paused = false;
         this.outcome = null;
         this.outcomeAnnounced = false;
+        this.feed = [];          // newest-first lines for the HUD event feed
         // A fresh level every mission: doors carry open/shut state.
         this.level = buildMap(this.mapId);
         const level = this.level;
@@ -59,6 +61,7 @@ export class GameScene extends Phaser.Scene {
             vision: this.vision,
             nav: this.nav,
             friendlies: this.squad,
+            hostiles: this.hostiles,
             noises: this.combat.noises,
             // A shut door is pathable (you can plan through it) but not walkable
             // until it is actually breached open.
@@ -88,6 +91,7 @@ export class GameScene extends Phaser.Scene {
         if (door.open) return;
         door.open = true;
         this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
+        this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
         this.nav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
@@ -167,6 +171,7 @@ export class GameScene extends Phaser.Scene {
             for (const hostile of this.hostiles) updateHostile(hostile, dt, this.ctx);
             for (const unit of this.units) unit.update(dt, this.ctx);
             for (const unit of this.units) unit.separate(this.units, this.ctx);
+            updateCover(this.units, this.level);
             this.combat.update(dt, this.units, time);
             updateSupport(this.units, dt, this.combat.events);
             this.effects.update(dt, this.combat.projectiles);
@@ -180,6 +185,7 @@ export class GameScene extends Phaser.Scene {
             for (const event of this.combat.events) {
                 this.audio.play(event.type, event.x, event.y);
                 this.effects.handle(event);
+                this.recordEvent(event);
             }
             this.combat.events.length = 0;
         }
@@ -206,6 +212,35 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    // Kills, casualties and breaches worth a line in the feed. Hits are far too
+    // frequent to report, but they do mark the unit so the renderer can show
+    // where the round came from.
+    recordEvent(event) {
+        if (event.kind === 'hit') {
+            const victim = this.units.find((u) => u.id === event.victim);
+            if (victim) {
+                victim.lastHitAngle = event.angle;
+                victim.lastHitAt = this.time.now;
+            }
+            if (event.type !== 'down') return;
+
+            const name = victim ? victim.stats.name : 'Hostile';
+            if (event.team === 'friendly') {
+                this.pushFeed(`${name} is DOWN`, '#ff6b6b');
+            } else {
+                const by = event.by ? `${event.by} \u25b8 ` : '';
+                this.pushFeed(`${by}${name}`, '#cfe9ff');
+            }
+        } else if (event.kind === 'explosion') {
+            this.pushFeed('Grenade out', '#ffd24a');
+        }
+    }
+
+    pushFeed(text, color) {
+        this.feed.unshift({ text, color, at: this.time.now });
+        this.feed.length = Math.min(this.feed.length, 5);
+    }
+
     checkOutcome() {
         // A downed squadmate is not a lost one until it bleeds out.
         if (this.hostiles.every((u) => !u.alive)) this.outcome = 'win';
@@ -226,6 +261,7 @@ export class GameScene extends Phaser.Scene {
             squadTotal: this.squad.length,
             squadAlive: this.squad.filter((u) => u.alive).length,
             squadDown: this.squad.filter((u) => u.downed).length,
+            feed: this.feed,
             paused: this.paused,
             outcome: this.outcome,
             muted: this.audio.muted || !this.audio.available,

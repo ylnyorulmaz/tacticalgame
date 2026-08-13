@@ -2,7 +2,7 @@
 // being told to; hostiles only shoot once their brain has flipped to ENGAGE.
 
 import { rectContains, solidRects, sandbagArcs, pointInSandbag } from '../level.js';
-import { SUPPRESSION } from '../config.js';
+import { SUPPRESSION, COVER } from '../config.js';
 
 const AIM_TOLERANCE = 0.2;      // rad of error allowed before the trigger is pulled
 const SUBSTEP = 8;              // px per collision substep, keeps tracers from tunnelling
@@ -147,9 +147,13 @@ export class CombatSystem {
         const muzzleX = unit.x + Math.cos(unit.facing) * (unit.radius + 12);
         const muzzleY = unit.y + Math.sin(unit.facing) * (unit.radius + 12);
         const pellets = weapon.pellets || 1;
+        // A target tucked behind a barricade is harder to hit, on top of the
+        // rounds the barricade itself eats.
+        const covered = unit.target ? unit.target.inCover || 0 : 0;
+        const spread = weapon.spread + covered * COVER.spreadPenalty;
 
         for (let i = 0; i < pellets; i++) {
-            const angle = unit.facing + (Math.random() - 0.5) * 2 * weapon.spread;
+            const angle = unit.facing + (Math.random() - 0.5) * 2 * spread;
             this.projectiles.push({
                 x: muzzleX,
                 y: muzzleY,
@@ -242,6 +246,8 @@ export class CombatSystem {
                             y: unit.y,
                             angle: Math.atan2(bullet.vy, bullet.vx),
                             team: unit.team,
+                            victim: unit.id,
+                            by: bullet.owner ? bullet.owner.stats.name : null,
                         });
                         dead = true;
                         break;

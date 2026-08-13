@@ -48,6 +48,7 @@ export class Unit {
         this.stationaryFor = 0;
         this.suppression = 0;
         this.pinned = false;
+        this.inCover = 0;        // 0..1, maintained by systems/cover.js
 
         // Hostile-only brain state, harmless on friendlies.
         this.ai = {
@@ -56,6 +57,10 @@ export class Unit {
             contactTimer: 0,
             searchTimer: 0,
             chaseTimer: 0,
+            flankTimer: 0,
+            flankSide: 0,
+            retreatTimer: 0,
+            seenBodies: new Set(),   // bodies already reacted to
             lastKnown: null,
             homeFacing: facing,
         };
