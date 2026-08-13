@@ -1,95 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Tactical CQB MLP Prototype</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
-    <style> body { margin: 0; background: #1a1a1a; } </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CQB Tactical — Top-Down Squad Prototype</title>
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #0c1210;
+        overflow: hidden;
+        font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif;
+        color: #e8f0e8;
+    }
+    #game { width: 100%; height: 100%; }
+    canvas { display: block; }
+    #boot-error {
+        display: none;
+        position: absolute;
+        inset: 0;
+        place-content: center;
+        text-align: center;
+        padding: 2rem;
+        line-height: 1.6;
+    }
+    #boot-error code {
+        background: #1c2a22;
+        padding: 0.15em 0.4em;
+        border-radius: 4px;
+    }
+</style>
 </head>
 <body>
+<div id="game"></div>
+<div id="boot-error">
+    <h1>Phaser failed to load</h1>
+    <p>The engine is loaded from a CDN with a local copy in <code>vendor/phaser.min.js</code> as fallback.<br>
+       Check your connection, or make sure the <code>vendor/</code> folder was served alongside this page.</p>
+</div>
+
+<!-- Engine: CDN first, vendored copy as offline fallback. -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 <script>
-const config = {
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
-    backgroundColor: '#2d3748',
-    physics: { default: 'arcade', arcade: { debug: false } },
-    scene: { preload: preload, create: create, update: update }
-};
-
-const game = new Phaser.Game(config);
-let player, selectedUnit = null;
-let targets = [];
-let obstacles;
-
-function preload() {}
-
-function create() {
-    // Grid Zemin Çizimi
-    let graphics = this.add.graphics();
-    graphics.lineStyle(1, 0x4a5568, 0.3);
-    for (let x = 0; x < 800; x += 40) graphics.lineBetween(x, 0, x, 600);
-    for (let y = 0; y < 600; y += 40) graphics.lineBetween(0, y, 800, y);
-
-    // Binalar / Engeller (Duvarlar)
-    obstacles = this.physics.add.staticGroup();
-    let wall = this.add.rectangle(400, 300, 200, 150, 0x1a202c).setStrokeStyle(2, 0xffffff);
-    this.physics.add.existing(wall, true);
-    obstacles.add(wall);
-
-    // Mavi Birim (Oyuncu / Operator)
-    player = this.add.circle(100, 300, 15, 0x3182ce);
-    player.facingLine = this.add.line(0, 0, 0, 0, 20, 0, 0xffffff).setLineWidth(2);
-    this.physics.add.existing(player);
-    player.body.setCollideWorldBounds(true);
-    player.speed = 150;
-    player.targetPos = null;
-
-    // Kırmızı Birimler (Düşmanlar)
-    for (let i = 0; i < 3; i++) {
-        let enemy = this.add.circle(380 + (i * 30), 280 + (i * 20), 12, 0xe53e3e);
-        this.physics.add.existing(enemy);
-        targets.push(enemy);
+    if (!window.Phaser) {
+        document.write('<script src="vendor/phaser.min.js"><\/script>');
     }
-
-    // Seçim ve Hareket Kontrolü
-    player.setInteractive(new Phaser.Geom.Circle(15, 15, 15), Phaser.Geom.Circle.Contains);
-    
-    this.input.on('gameobjectdown', (pointer, gameObject) => {
-        if (gameObject === player) {
-            selectedUnit = player;
-            player.setStrokeStyle(3, 0x63b3ed);
-        }
-    });
-
-    this.input.on('pointerdown', (pointer) => {
-        if (selectedUnit && pointer.rightButtonDown()) {
-            selectedUnit.targetPos = new Phaser.Math.Vector2(pointer.x, pointer.y);
-        }
-    });
-
-    // Sağ Tık Menüsünü Engelle
-    this.game.canvas.oncontextmenu = (e) => e.preventDefault();
-}
-
-function update() {
-    if (player.targetPos) {
-        let distance = Phaser.Math.Distance.BetweenPoints(player, player.targetPos);
-        if (distance > 5) {
-            this.physics.moveToObject(player, player.targetPos, player.speed);
-            
-            // Görüş çizgisini hareket yönüne döndür
-            let angle = Phaser.Math.Angle.BetweenPoints(player, player.targetPos);
-            player.facingLine.setPosition(player.x, player.y);
-            player.facingLine.setTo(0, 0, Math.cos(angle) * 25, Math.sin(angle) * 25);
-        } else {
-            player.body.setVelocity(0, 0);
-            player.targetPos = null;
-        }
-    } else {
-        player.facingLine.setPosition(player.x, player.y);
-    }
-}
 </script>
+<script>
+    window.addEventListener('load', () => {
+        if (!window.Phaser) {
+            document.getElementById('boot-error').style.display = 'grid';
+        }
+    });
+</script>
+<script type="module" src="src/main.js"></script>
 </body>
 </html>
