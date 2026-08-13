@@ -16,6 +16,7 @@ export function makeOrder() {
         suppressAt: null,   // {x, y} patch of ground to keep rounds on
         throwAt: null,      // {x, y, kind} aimed throw waiting to go out
         stackAt: null,      // door to wait beside instead of breaching
+        useCharge: false,   // blow the next door rather than force it
     };
 }
 
@@ -87,8 +88,7 @@ export function setThrow(units, x, y, kind = 'frag') {
 }
 
 export function canThrow(unit, kind = 'frag') {
-    if (kind === 'frag') return !!unit.stats.grenade && unit.grenadesLeft > 0;
-    return false;
+    return (unit.kit[kind] || 0) > 0;
 }
 
 // Stacking: walk to a spot beside the door and wait there. Nobody goes through
@@ -112,6 +112,10 @@ export function stackOn(units, door, ctx) {
 
 // Go: everyone stacked on a door heads through it, and the normal breach
 // behaviour in units.js takes over from there.
+//
+// An ordered breach is the one that uses a charge — fast and very loud. Walking
+// into a door on the way past still forces it by hand, quietly, which is the
+// trade the two make.
 export function goBreach(units, ctx) {
     let ordered = 0;
     for (const unit of units) {
@@ -119,6 +123,7 @@ export function goBreach(units, ctx) {
         if (!door || !unit.alive) continue;
         unit.order.stackAt = null;
         unit.order.facing = null;
+        unit.order.useCharge = unit.kit.charge > 0;
         ctx.repath(unit, { x: door.x + door.w / 2, y: door.y + door.h / 2 });
         ordered++;
     }

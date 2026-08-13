@@ -51,7 +51,7 @@ export class EntityRenderer {
     }
 
     draw(state) {
-        const { units, projectiles, explosions, effects, vision, friendlies, selected } = state;
+        const { units, projectiles, explosions, effects, vision, friendlies, selected, clouds } = state;
         const ground = this.groundLayer;
         const top = this.unitLayer;
         const overlay = this.overlayLayer;
@@ -89,6 +89,7 @@ export class EntityRenderer {
             if (unit.pinned) drawPinned(overlay, unit);
             if (unit.inCover > 0.35) drawCoverMark(overlay, unit);
             if (unit.isFriendly && unit.order.stance === 'hold') drawHoldMark(overlay, unit);
+            if (unit.blinded > 0) drawBlinded(overlay, unit, state.time);
             if (unit.lastHitAt && state.time - unit.lastHitAt < 700) {
                 drawHitDirection(overlay, unit, (state.time - unit.lastHitAt) / 700);
             }
@@ -105,8 +106,13 @@ export class EntityRenderer {
 
         for (const blast of explosions) {
             if (!visible(blast.x, blast.y)) continue;
-            drawExplosion(fx, blast);
+            if (blast.flash) drawFlash(fx, blast);
+            else drawExplosion(fx, blast);
         }
+
+        // Smoke sits above the units it is hiding — it is the reason they cannot
+        // be seen, so it must not be drawn underneath them.
+        for (const cloud of clouds || []) drawSmoke(overlay, cloud, state.time);
 
         // Standing orders for the selection, so the player can read back what
         // was asked for without waiting to see whether it happens.
@@ -121,6 +127,48 @@ export class EntityRenderer {
             }
         }
     }
+}
+
+// Blinded: a stuttering white halo, so a flashbanged unit reads as "out of it"
+// rather than as one that has simply stopped.
+function drawBlinded(g, unit, time) {
+    const flicker = 0.5 + 0.5 * Math.sin(time / 40);
+    g.lineStyle(2, 0xfff2a8, 0.35 + 0.5 * flicker);
+    g.strokeCircle(unit.x, unit.y, unit.radius + 8 + flicker * 3);
+    for (let i = 0; i < 3; i++) {
+        const angle = time / 90 + (i / 3) * Math.PI * 2;
+        g.fillStyle(0xffffff, 0.5 * flicker);
+        g.fillCircle(
+            unit.x + Math.cos(angle) * (unit.radius + 12),
+            unit.y + Math.sin(angle) * (unit.radius + 12),
+            2.5,
+        );
+    }
+}
+
+// A bank of smoke: several offset blobs that drift slowly, so the edge reads as
+// smoke rather than as a circle someone drew.
+function drawSmoke(g, cloud, time) {
+    const puffs = 7;
+    for (let i = 0; i < puffs; i++) {
+        const spin = time / 3600 + (i / puffs) * Math.PI * 2;
+        const drift = cloud.radius * 0.42;
+        const x = cloud.x + Math.cos(spin) * drift;
+        const y = cloud.y + Math.sin(spin * 1.3) * drift * 0.8;
+        g.fillStyle(0xd8ddd9, 0.2 * cloud.alpha);
+        g.fillCircle(x, y, cloud.radius * 0.62);
+    }
+    g.fillStyle(0xe6eae7, 0.3 * cloud.alpha);
+    g.fillCircle(cloud.x, cloud.y, cloud.radius * 0.7);
+}
+
+// A flashbang is light, not fire: a white bloom and an expanding ring.
+function drawFlash(g, blast) {
+    const life = Math.max(0, Math.min(1, blast.ttl / 320));
+    g.fillStyle(0xffffff, 0.75 * life);
+    g.fillCircle(blast.x, blast.y, blast.radius * (1.05 - life * 0.35));
+    g.lineStyle(4, 0xfff2a8, life);
+    g.strokeCircle(blast.x, blast.y, blast.radius * (1.25 - life));
 }
 
 // The arc a unit will be watching when it gets where it is going.

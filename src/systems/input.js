@@ -16,6 +16,8 @@ const FACE_SLOP = 16;       // drag this far off a move order to set an arrival 
 export const AIMED_VERBS = {
     suppress: { key: 'Q', label: 'SUPPRESS', color: 0xffd24a },
     frag: { key: 'G', label: 'FRAG', color: 0xff8a3a },
+    smoke: { key: 'C', label: 'SMOKE', color: 0xbfc9c2 },
+    flash: { key: 'V', label: 'FLASH', color: 0xfff2a8 },
     stack: { key: 'E', label: 'STACK', color: 0x7fd8ff },
 };
 

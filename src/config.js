@@ -59,6 +59,7 @@ export const UNIT_CLASSES = {
             spare: 6,
             reloadTime: 2200,
         },
+        kit: { smoke: 1 },
         bars: { Speed: 6, Firepower: 6, Survivability: 6, Range: 8 },
         ability: 'Balanced rifleman',
     },
@@ -86,6 +87,7 @@ export const UNIT_CLASSES = {
             reloadTime: 2700,
             pellets: 3,
         },
+        kit: { charge: 2, flash: 2 },
         bars: { Speed: 8, Firepower: 9, Survivability: 8, Range: 3 },
         ability: 'Forces doors twice as fast',
     },
@@ -122,6 +124,7 @@ export const UNIT_CLASSES = {
             damage: 70,
             speed: 470,
         },
+        kit: { frag: 4, smoke: 2 },
         bars: { Speed: 5, Firepower: 9, Survivability: 6, Range: 6 },
         ability: 'Grenades arc over cover',
     },
@@ -154,6 +157,7 @@ export const UNIT_CLASSES = {
             reviveTime: 2600,
             reviveHp: 45,
         },
+        kit: { smoke: 2 },
         bars: { Speed: 7, Firepower: 3, Survivability: 7, Range: 4 },
         ability: 'Heals nearby · revives downed',
     },
@@ -181,6 +185,7 @@ export const UNIT_CLASSES = {
             reloadTime: 2500,
         },
         steadyTime: 420,        // ms stationary before the shot can be taken
+        kit: { },
         bars: { Speed: 4, Firepower: 8, Survivability: 3, Range: 10 },
         ability: 'Must be set to shoot',
     },
@@ -208,6 +213,7 @@ export const UNIT_CLASSES = {
             reloadTime: 4200,
         },
         suppressionPerHit: 26,  // applied on hits and near misses alike
+        kit: { },
         bars: { Speed: 3, Firepower: 7, Survivability: 7, Range: 6 },
         ability: 'Sustained fire pins hostiles',
     },
@@ -290,6 +296,33 @@ export const UNIT_CLASSES = {
         },
         bars: { Speed: 2, Firepower: 7, Survivability: 8, Range: 8 },
         ability: 'Slow, tough, long reach',
+    },
+};
+
+// Throwables and door charges. Smoke is the odd one out: it stops sight without
+// stopping a bullet, which is exactly what makes it worth carrying — you can
+// cross open ground behind it, and so can they.
+export const TOOLS = {
+    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200 },
+    smoke: {
+        radius: 104,
+        speed: 430,
+        cooldown: 3000,
+        duration: 13000,    // ms the cloud blocks sight for
+        growTime: 1100,     // ms to bloom to full size
+        fadeTime: 2600,     // ms of thinning out at the end
+    },
+    flash: {
+        radius: 165,
+        speed: 480,
+        cooldown: 3500,
+        blindTime: 3200,    // ms of blindness at the centre, less further out
+    },
+    charge: {
+        radius: 120,
+        damage: 55,
+        placeTime: 700,     // ms to set it on the door
+        fuse: 1400,         // ms from set to bang
     },
 };
 

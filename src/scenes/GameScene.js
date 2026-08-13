@@ -69,8 +69,11 @@ export class GameScene extends Phaser.Scene {
             // until it is actually breached open.
             blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2),
             closedDoorAt: (x, y) => doorAtPoint(this.level.doors, x, y, 10),
-            openDoor: (door) => this.openDoor(door),
-            onBreachStart: (unit) => this.audio.play('breachStart', unit.x, unit.y),
+            openDoor: (door, chargedBy) => this.openDoor(door, chargedBy),
+            onBreachStart: (unit, door, charge) => {
+                this.audio.play('breachStart', unit.x, unit.y);
+                if (charge) this.pushFeed(`Charge set on ${door.id}`, '#ff8a3a');
+            },
             repath: (unit, point) => {
                 const path = this.nav.findPath(unit.x, unit.y, point.x, point.y);
                 unit.setPath(path);
@@ -89,11 +92,17 @@ export class GameScene extends Phaser.Scene {
         if (!this.scene.isActive('hud')) this.scene.launch('hud');
     }
 
-    openDoor(door) {
+    openDoor(door, chargedBy = null) {
         if (door.open) return;
         door.open = true;
-        this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
-        this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
+        if (chargedBy) {
+            // The charge takes the door and whatever was standing behind it.
+            this.combat.blastDoor(door, this.units);
+            this.pushFeed(`${door.id} blown`, '#ff8a3a');
+        } else {
+            this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
+            this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
+        }
         this.nav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
@@ -212,14 +221,14 @@ export class GameScene extends Phaser.Scene {
             return;
         }
 
-        if (verb === 'frag') {
-            const thrower = orders.setThrow(this.selected, x, y, 'frag');
+        if (verb === 'frag' || verb === 'smoke' || verb === 'flash') {
+            const thrower = orders.setThrow(this.selected, x, y, verb);
             if (!thrower) {
-                this.pushFeed('No grenade in range', '#ff6b6b');
+                this.pushFeed(`No ${verb} in range`, '#ff6b6b');
                 return;
             }
             this.audio.play('order');
-            this.pushFeed(`${thrower.stats.name}: frag out`, '#ffd24a');
+            this.pushFeed(`${thrower.stats.name}: ${verb} out`, '#ffd24a');
             return;
         }
 
@@ -259,6 +268,10 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             updateCover(this.units, this.level);
             this.combat.update(dt, this.units, time);
+            // Smoke is an occluder like any other, it just moves: hand the
+            // current clouds to the vision system before anything asks what it
+            // can see this frame.
+            this.vision.setClouds(this.combat.clouds);
             updateSupport(this.units, dt, this.combat.events);
             this.effects.update(dt, this.combat.projectiles);
             this.checkOutcome();
@@ -290,6 +303,7 @@ export class GameScene extends Phaser.Scene {
             units: this.units,
             projectiles: this.combat.projectiles,
             explosions: this.combat.explosions,
+            clouds: this.combat.clouds,
             effects: this.effects,
             time,
             vision: this.vision,
@@ -341,11 +355,17 @@ export class GameScene extends Phaser.Scene {
         const lead = this.selected.length > 0 ? this.selected[0] : null;
         return {
             cls: lead ? lead.cls : null,
-            grenadesLeft: lead ? lead.grenadesLeft : 0,
+            kit: lead ? lead.kit : null,
             // What the order palette needs to show the state of the selection.
             hasSelection: this.selected.length > 0,
             stance: lead ? lead.order.stance : 'free',
             pace: lead ? lead.order.pace : 'normal',
+            // Totals across the selection, since an aimed throw goes to whoever
+            // in it is best placed rather than to the lead.
+            kitTotals: this.selected.reduce((sum, u) => {
+                for (const key of Object.keys(u.kit)) sum[key] = (sum[key] || 0) + u.kit[key];
+                return sum;
+            }, {}),
             suppressing: this.selected.some((u) => u.order.suppressAt),
             stacked: this.squad.filter((u) => u.alive && u.order.stackAt).length,
             pendingOrder: this.pendingOrder,

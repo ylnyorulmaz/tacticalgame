@@ -13,8 +13,17 @@ export function updateHostile(unit, dt, ctx) {
     if (!unit.alive) return;
     const brain = unit.ai;
 
-    // Rounds cracking overhead stop everything else: no advancing, no patrolling.
-    if (unit.pinned) unit.stop();
+    // Rounds cracking overhead stop everything else: no advancing, no
+    // patrolling. A flashbang does the same, harder — a blinded hostile is out
+    // of the fight until its eyes come back.
+    if (unit.pinned || unit.blinded > 0) unit.stop();
+    if (unit.blinded > 0) {
+        brain.state = 'blinded';
+        brain.contactTimer = 0;
+        unit.target = null;
+        return;
+    }
+    if (brain.state === 'blinded') brain.state = 'search';
 
     // Badly hurt and still being shot at? Break contact.
     if (unit.hp / unit.maxHp <= AI.retreatHp && brain.state !== 'falling-back') {
@@ -202,7 +211,7 @@ function nearestVisible(unit, ctx) {
         if (!friendly.alive) continue;
         const dist = Math.hypot(friendly.x - unit.x, friendly.y - unit.y);
         if (dist > unit.stats.sight || dist > bestDist) continue;
-        if (!ctx.vision.hasLineOfSight(unit.x, unit.y, friendly.x, friendly.y)) continue;
+        if (!ctx.vision.canObserve(unit.x, unit.y, friendly.x, friendly.y)) continue;
         best = friendly;
         bestDist = dist;
     }
@@ -215,7 +224,7 @@ function visibleBody(unit, ctx) {
         if (unit.ai.seenBodies.has(mate.id)) continue;
         const dist = Math.hypot(mate.x - unit.x, mate.y - unit.y);
         if (dist > unit.stats.sight * 0.7) continue;
-        if (!ctx.vision.hasLineOfSight(unit.x, unit.y, mate.x, mate.y)) continue;
+        if (!ctx.vision.canObserve(unit.x, unit.y, mate.x, mate.y)) continue;
         return mate;
     }
     return null;

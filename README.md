@@ -45,6 +45,8 @@ automatic offline fallback, so the game still boots without a network.
 | `F` | Hold fire / weapons free |
 | `Q` then click | Suppress that patch of ground — no target needed |
 | `G` then click | Throw a frag exactly there |
+| `C` then click | Smoke: blocks sight, not bullets |
+| `V` then click | Flashbang: blinds everyone who can see it |
 | `E` then click a door | Stack beside it and wait |
 | `Enter` | GO — everyone stacked goes through together |
 | `Z` | Pace: normal → sprint (fast, no shooting) → careful (slow, stays set) |
@@ -156,6 +158,17 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   choice too — sprinting is fast with the weapon down, creeping is slow but keeps
   the marksman set. `src/systems/orders.js` owns all of it; every unit carries one
   order record, and an untouched record behaves exactly as the game did before.
+- **Tools that change the ground, not just the damage.** Smoke is the important
+  one: `src/systems/vision.js` keeps two occluder sets, and the game asks two
+  different questions of them. `hasLineOfSight` is the bullet's question — walls,
+  shut doors, crates — and blast and tracers use it. `canObserve` is the eye's
+  question and adds whatever smoke is hanging in between; acquisition, the
+  hostile brain and the fog all use that one. So you can cross open ground behind
+  a cloud, fire blind through it, and be fired at blind through it, and none of
+  that needed a special case. Flashbangs blind everyone with a view of the burst
+  and hurt nobody, which is what makes a room enterable without a grenade.
+  Breaching charges are the loud alternative to forcing a door by hand — a
+  stacked breacher told to GO blows it and catches whoever was behind it.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
   With orders in the game the pause is a planning phase rather than a freeze

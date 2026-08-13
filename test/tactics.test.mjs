@@ -13,7 +13,7 @@ import { Unit, doorAtPoint } from '../src/systems/units.js';
 import { updateHostile } from '../src/systems/ai.js';
 import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
-import { SUPPRESSION, UNIT_CLASSES } from '../src/config.js';
+import { SUPPRESSION, UNIT_CLASSES, TOOLS } from '../src/config.js';
 
 export const name = 'tactics';
 
@@ -41,9 +41,10 @@ function world(mapId = 'compound') {
         noises: combat.noises,
         blocked: (x, y) => nav.isBlockedWorld(x, y) || !!doorAtPoint(level.doors, x, y, 2),
         closedDoorAt: (x, y) => doorAtPoint(level.doors, x, y, 10),
-        openDoor: (door) => {
+        openDoor: (door, chargedBy) => {
             if (door.open) return;
             door.open = true;
+            if (chargedBy) combat.blastDoor(door, units);
             nav.rebuild();
             vision.refreshSegments();
             combat.refreshBlockers();
@@ -65,6 +66,7 @@ function world(mapId = 'compound') {
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
+            vision.setClouds(combat.clouds);
             combat.events.length = 0;
         }
     };
@@ -79,6 +81,7 @@ function world(mapId = 'compound') {
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
+            vision.setClouds(combat.clouds);
             shots += combat.events.filter(
                 (e) => e.kind === 'shot' && (!who || e.unit === who.id),
             ).length;
@@ -101,6 +104,85 @@ export function run(t) {
     arrivalFacing(t);
     aimedThrow(t);
     ammo(t);
+    smoke(t);
+    flashbang(t);
+    breachingCharge(t);
+}
+
+// Smoke is the one occluder that stops eyes without stopping bullets. That split
+// is the whole reason it is worth carrying, so it is worth pinning down.
+function smoke(t) {
+    const w = world();
+    const spotter = w.add('operator', OPEN.x, OPEN.y);
+    const target = w.add('hostile', OPEN.x + 300, OPEN.y);
+    target.maxHp = 1e6;
+    target.hp = 1e6;
+
+    w.combat.addCloud(OPEN.x + 150, OPEN.y);
+    w.run(TOOLS.smoke.growTime + 200);
+
+    const a = [spotter.x, spotter.y, target.x, target.y];
+    t.ok(!w.vision.canObserve(...a), 'a cloud in the way blocks the view');
+    t.ok(w.vision.hasLineOfSight(...a), 'but not the path a bullet would take');
+    t.equal(spotter.target, null, 'so nothing can be acquired through it');
+
+    // A round fired into the cloud carries on through and connects.
+    const before = target.hp;
+    spotter.facing = 0;
+    spotter.aimAngle = 0;
+    w.combat.fire(spotter, w.now);
+    w.run(600);
+    t.ok(target.hp < before, 'and a round fired blind still goes through');
+
+    // And it clears on its own.
+    w.run(TOOLS.smoke.duration);
+    t.equal(w.combat.clouds.length, 0, 'the cloud burns out');
+    t.ok(w.vision.canObserve(spotter.x, spotter.y, target.x, target.y), 'and the view comes back');
+}
+
+function flashbang(t) {
+    const w = world();
+    const exposed = w.add('hostile', OPEN.x + 60, OPEN.y);
+    w.combat.flash(OPEN.x, OPEN.y, w.units);
+    t.ok(exposed.blinded > 0, 'a flashbang blinds whoever was looking at it');
+    t.equal(exposed.hp, exposed.maxHp, 'and hurts nobody');
+    t.ok(!w.combat.canShoot(exposed), 'a blinded unit cannot shoot');
+
+    // Behind a wall is behind a wall. The compound's building wall runs along
+    // x = 900; one unit each side of it, both within the radius.
+    const s = world();
+    const inside = s.add('hostile', 880, 400);
+    const outside = s.add('hostile', 940, 400);
+    s.combat.flash(870, 400, s.units);
+    t.ok(inside.blinded > 0, 'the one with a view of the burst is blinded');
+    t.equal(outside.blinded, 0, 'the one behind the wall is not');
+
+    // It wears off.
+    w.run(4000);
+    t.equal(exposed.blinded, 0, 'blindness wears off');
+}
+
+function breachingCharge(t) {
+    const w = world();
+    const door = w.level.doors[0];
+    const spec = w.level.squad[0];
+    const breacher = w.add('breacher', spec.x, spec.y);
+    const charges = breacher.kit.charge;
+    t.ok(charges > 0, 'the breacher deploys with charges');
+
+    // Standing right behind the door, on the inside.
+    const inside = w.add('hostile', door.x + door.w / 2, door.y - 60);
+    const hp = inside.hp;
+
+    orders.stackOn([breacher], door, w.ctx);
+    w.run(14000);
+    orders.goBreach([breacher], w.ctx);
+    t.ok(breacher.order.useCharge, 'an ordered breach reaches for a charge');
+    w.run(10000);
+
+    t.ok(door.open, 'the charge takes the door');
+    t.equal(breacher.kit.charge, charges - 1, 'and costs one charge');
+    t.ok(inside.hp < hp, 'whoever was standing behind it catches the blast');
 }
 
 // The magazine switch: on, a weapon runs dry and costs real time to reload; off,
@@ -286,9 +368,9 @@ function aimedThrow(t) {
 
     const thrower = orders.setThrow([grenadier], OPEN.x + 320, OPEN.y, 'frag');
     t.equal(thrower, grenadier, 'the aimed throw goes to the unit that can make it');
-    const before = grenadier.grenadesLeft;
+    const before = grenadier.kit.frag;
     w.run(2500);
-    t.equal(grenadier.grenadesLeft, before - 1, 'exactly one grenade leaves the pouch');
+    t.equal(grenadier.kit.frag, before - 1, 'exactly one grenade leaves the pouch');
     t.equal(grenadier.order.throwAt, null, 'and the order clears once it is out');
 
     // Nobody in the selection can throw: the order is refused, not queued.

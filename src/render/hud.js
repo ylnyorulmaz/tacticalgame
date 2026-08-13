@@ -10,6 +10,7 @@ import { Minimap } from './minimap.js';
 import { Palette } from './palette.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
+const KIT_COLORS = { frag: 0xff8a3a, smoke: 0xdfe6e1, flash: 0xfff2a8, charge: 0xff5a3a };
 const BLOCKS = 10;
 const BLOCK_W = 17;
 const BLOCK_H = 10;
@@ -227,14 +228,20 @@ export class HudScene extends Phaser.Scene {
         drawWeapon(this.gfx, gunX, gunY, angle, glyph, scale);
         if (glyph.icon === 'cross') drawCrossIcon(this.gfx, { x: glyphX, y: glyphY }, 1.15);
 
-        // Grenade charges, so you can see when the grenadier has run dry.
-        if (cls.grenade) {
-            for (let i = 0; i < cls.grenade.count; i++) {
-                const x = glyphX - 22 + i * 15;
-                const spent = i >= state.grenadesLeft;
-                this.gfx.fillStyle(spent ? COLORS.hud : 0xffd24a, spent ? 0.3 : 1);
-                this.gfx.fillCircle(x, glyphY + 30, 5);
+        // Kit pips: one row per thing this class carries, spent ones hollowed
+        // out, so you can see at a glance what is left to work with.
+        const carried = cls.kit || {};
+        let row = 0;
+        for (const [kind, total] of Object.entries(carried)) {
+            if (!total) continue;
+            const left = state.kit ? state.kit[kind] || 0 : 0;
+            const y = glyphY + 30 + row * 13;
+            for (let i = 0; i < total; i++) {
+                const spent = i >= left;
+                this.gfx.fillStyle(spent ? COLORS.hud : KIT_COLORS[kind] || 0xffd24a, spent ? 0.3 : 1);
+                this.gfx.fillCircle(glyphX - 24 + i * 13, y, 4.5);
             }
+            row++;
         }
 
         BAR_ORDER.forEach((name, row) => {

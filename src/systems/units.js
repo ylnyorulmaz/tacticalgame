@@ -1,7 +1,7 @@
 // Unit model: stats, movement along a smoothed path, door breaching, damage and
 // death. Rendering lives in render/entities.js — a unit here is plain state.
 
-import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED } from '../config.js';
+import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS } from '../config.js';
 import { rectContains } from '../level.js';
 import { makeOrder, paceScale, staysSet } from './orders.js';
 import { settings } from './settings.js';
@@ -45,8 +45,13 @@ export class Unit {
         this.target = null;
         this.muzzleFlash = 0;
         this.recoil = 0;
-        this.grenadesLeft = this.stats.grenade ? this.stats.grenade.count : 0;
+        // Throwables and door charges, copied per unit so spending one does not
+        // empty the whole class's pouch.
+        this.kit = { frag: 0, smoke: 0, flash: 0, charge: 0, ...(this.stats.kit || {}) };
         this.grenadeTimer = 0;
+        // Flashbanged: cannot see, cannot shoot, and the brain treats it as
+        // being pinned.
+        this.blinded = 0;
 
         // Magazines, but only if the player asked for them on the menu. With the
         // switch off these are Infinity, which turns every ammo check below into
@@ -166,6 +171,11 @@ export class Unit {
         this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
     }
 
+    blind(ms) {
+        if (!this.alive) return;
+        this.blinded = Math.max(this.blinded, ms);
+    }
+
     update(dt, ctx) {
         // Bleeding out is the only thing a downed unit does on its own.
         if (this.downed) {
@@ -181,6 +191,7 @@ export class Unit {
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
+        this.blinded = Math.max(0, this.blinded - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
         if (this.reloadTimer > 0) {
             this.reloadTimer -= dt;
@@ -209,7 +220,7 @@ export class Unit {
             this.breaching.timer -= dt;
             this.facing = turnToward(this.facing, this.breaching.angle, this.stats.turnSpeed * dt / 1000);
             if (this.breaching.timer <= 0) {
-                ctx.openDoor(this.breaching.door);
+                ctx.openDoor(this.breaching.door, this.breaching.charge ? this : null);
                 this.breaching = null;
                 // The grid changed under us; re-plan the rest of the route.
                 if (this.orderPoint) ctx.repath(this, this.orderPoint);
@@ -245,12 +256,20 @@ export class Unit {
         if (door) {
             const gap = Math.hypot(door.x + door.w / 2 - this.x, door.y + door.h / 2 - this.y);
             if (gap < 52) {
+                // An ordered breach with a charge in the pouch is quick and very
+                // loud; anything else is forced by hand.
+                const charge = this.order.useCharge && this.kit.charge > 0;
+                if (charge) {
+                    this.kit.charge -= 1;
+                    this.order.useCharge = false;
+                }
                 this.breaching = {
                     door,
-                    timer: this.stats.breachTime,
+                    charge,
+                    timer: charge ? TOOLS.charge.placeTime + TOOLS.charge.fuse : this.stats.breachTime,
                     angle: Math.atan2(door.y + door.h / 2 - this.y, door.x + door.w / 2 - this.x),
                 };
-                if (ctx.onBreachStart) ctx.onBreachStart(this, door);
+                if (ctx.onBreachStart) ctx.onBreachStart(this, door, charge);
                 return;
             }
         }

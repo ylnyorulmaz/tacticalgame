@@ -17,11 +17,39 @@ function rectToSegments(rect, out) {
     out.push({ ax: x, ay: y + h, bx: x, by: y });
 }
 
+// A cloud is approximated by a polygon rather than a circle: the whole
+// visibility solver is segment-based, and a dozen edges is close enough to round
+// at these radii.
+const CLOUD_SIDES = 12;
+
 export class VisionSystem {
     constructor(level) {
         this.level = level;
         this.segments = [];
+        // Occluders that come and go — smoke, so far. Kept apart from the static
+        // soup because bullets ignore them and eyes do not.
+        this.dynamic = [];
         this.refreshSegments();
+    }
+
+    // Smoke blocks sight without blocking anything else, so it lives in its own
+    // segment list that only the seeing tests consult.
+    setClouds(clouds) {
+        const segments = [];
+        for (const cloud of clouds) {
+            if (cloud.radius <= 1) continue;
+            let px = cloud.x + cloud.radius;
+            let py = cloud.y;
+            for (let i = 1; i <= CLOUD_SIDES; i++) {
+                const angle = (i / CLOUD_SIDES) * Math.PI * 2;
+                const x = cloud.x + Math.cos(angle) * cloud.radius;
+                const y = cloud.y + Math.sin(angle) * cloud.radius;
+                segments.push(measured({ ax: px, ay: py, bx: x, by: y }));
+                px = x;
+                py = y;
+            }
+        }
+        this.dynamic = segments;
     }
 
     // Called whenever a door opens: the blocker set changes, nothing else does.
@@ -29,18 +57,13 @@ export class VisionSystem {
         const segments = [];
         for (const rect of sightBlockingRects(this.level)) rectToSegments(rect, segments);
         rectToSegments({ x: 0, y: 0, w: WORLD.width, h: WORLD.height }, segments);
-        for (const seg of segments) {
-            seg.minX = Math.min(seg.ax, seg.bx);
-            seg.maxX = Math.max(seg.ax, seg.bx);
-            seg.minY = Math.min(seg.ay, seg.by);
-            seg.maxY = Math.max(seg.ay, seg.by);
-        }
+        for (const seg of segments) measured(seg);
         this.segments = segments;
     }
 
     segmentsNear(x, y, radius) {
         const near = [];
-        for (const seg of this.segments) {
+        for (const seg of this.allSegments()) {
             if (seg.maxX < x - radius || seg.minX > x + radius) continue;
             if (seg.maxY < y - radius || seg.minY > y + radius) continue;
             near.push(seg);
@@ -48,13 +71,30 @@ export class VisionSystem {
         return near;
     }
 
-    // True when nothing solid stands between the two points.
+    allSegments() {
+        return this.dynamic.length === 0 ? this.segments : [...this.segments, ...this.dynamic];
+    }
+
+    // True when nothing *solid* stands between the two points. This is the
+    // bullet's question: rounds and blast go through smoke.
     hasLineOfSight(ax, ay, bx, by) {
+        return this.clear(this.segments, ax, ay, bx, by);
+    }
+
+    // True when nothing blocks the *view* — walls, shut doors, crates, and any
+    // smoke hanging in between. This is the eye's question, and it is what
+    // acquisition, the hostile brain and the fog all ask.
+    canObserve(ax, ay, bx, by) {
+        if (!this.clear(this.segments, ax, ay, bx, by)) return false;
+        return this.dynamic.length === 0 || this.clear(this.dynamic, ax, ay, bx, by);
+    }
+
+    clear(segments, ax, ay, bx, by) {
         const minX = Math.min(ax, bx);
         const maxX = Math.max(ax, bx);
         const minY = Math.min(ay, by);
         const maxY = Math.max(ay, by);
-        for (const seg of this.segments) {
+        for (const seg of segments) {
             if (seg.maxX < minX || seg.minX > maxX || seg.maxY < minY || seg.minY > maxY) continue;
             if (segmentsIntersect(ax, ay, bx, by, seg.ax, seg.ay, seg.bx, seg.by)) return false;
         }
@@ -65,7 +105,7 @@ export class VisionSystem {
     canSee(observer, x, y) {
         const dist = Math.hypot(x - observer.x, y - observer.y);
         if (dist > observer.stats.sight) return false;
-        return this.hasLineOfSight(observer.x, observer.y, x, y);
+        return this.canObserve(observer.x, observer.y, x, y);
     }
 
     canAnySee(observers, x, y) {
@@ -108,6 +148,16 @@ export class VisionSystem {
         }
         return points;
     }
+}
+
+// Cache each segment's bounding box: the broad-phase rejection in `clear` runs
+// over every segment on every sight test, so this is the hot path.
+function measured(seg) {
+    seg.minX = Math.min(seg.ax, seg.bx);
+    seg.maxX = Math.max(seg.ax, seg.bx);
+    seg.minY = Math.min(seg.ay, seg.by);
+    seg.maxY = Math.max(seg.ay, seg.by);
+    return seg;
 }
 
 // Ray (origin + unit direction) against a segment. Returns distance along the

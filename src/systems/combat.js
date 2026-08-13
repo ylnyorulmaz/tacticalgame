@@ -2,7 +2,7 @@
 // being told to; hostiles only shoot once their brain has flipped to ENGAGE.
 
 import { rectContains, solidRects, sandbagArcs, pointInSandbag } from '../level.js';
-import { SUPPRESSION, COVER, ORDERS } from '../config.js';
+import { SUPPRESSION, COVER, ORDERS, TOOLS } from '../config.js';
 import { isSprinting } from './orders.js';
 
 const AIM_TOLERANCE = 0.2;      // rad of error allowed before the trigger is pulled
@@ -16,6 +16,8 @@ export class CombatSystem {
         this.vision = vision;
         this.projectiles = [];
         this.explosions = [];
+        this.clouds = [];       // smoke: blocks sight, not bullets
+        this.charges = [];      // set on a door, counting down
         this.noises = [];
         // Sound events for the frame, drained by the scene. Combat stays unaware
         // of the audio engine; it just reports what happened and where.
@@ -60,12 +62,44 @@ export class CombatSystem {
         }
 
         this.stepProjectiles(dt, units);
+        this.stepClouds(dt);
         for (const blast of this.explosions) blast.ttl -= dt;
         this.explosions = this.explosions.filter((blast) => blast.ttl > 0);
         this.noises = this.noises.filter((n) => now - n.time < 900);
     }
 
+    // Smoke blooms, hangs, then thins out. The radius is a function of age, and
+    // the vision system reads it every frame it changes.
+    stepClouds(dt) {
+        for (const cloud of this.clouds) {
+            cloud.age += dt;
+            const grow = Math.min(1, cloud.age / TOOLS.smoke.growTime);
+            const left = cloud.life - cloud.age;
+            const fade = left >= TOOLS.smoke.fadeTime ? 1 : Math.max(0, left / TOOLS.smoke.fadeTime);
+            cloud.radius = cloud.full * grow * fade;
+            cloud.alpha = fade;
+        }
+        this.clouds = this.clouds.filter((c) => c.age < c.life);
+    }
+
+    addCloud(x, y) {
+        this.clouds.push({
+            x, y,
+            age: 0,
+            life: TOOLS.smoke.duration,
+            full: TOOLS.smoke.radius,
+            radius: 1,
+            alpha: 1,
+        });
+        this.events.push({ type: 'smokePop', kind: 'smoke', x, y });
+    }
+
     acquire(unit, enemies) {
+        // You cannot shoot what you cannot see, and a blind man sees nothing.
+        if (unit.blinded > 0) {
+            unit.target = null;
+            return;
+        }
         const reach = Math.min(unit.stats.sight, unit.stats.weapon.range);
         const current = unit.target;
         if (current && current.alive && this.inReach(unit, current, reach)) return;
@@ -75,7 +109,7 @@ export class CombatSystem {
         for (const enemy of enemies) {
             const dist = Math.hypot(enemy.x - unit.x, enemy.y - unit.y);
             if (dist > reach || dist > bestDist) continue;
-            if (!this.vision.hasLineOfSight(unit.x, unit.y, enemy.x, enemy.y)) continue;
+            if (!this.vision.canObserve(unit.x, unit.y, enemy.x, enemy.y)) continue;
             best = enemy;
             bestDist = dist;
         }
@@ -85,7 +119,7 @@ export class CombatSystem {
     inReach(unit, target, reach) {
         const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
         if (dist > reach) return false;
-        return this.vision.hasLineOfSight(unit.x, unit.y, target.x, target.y);
+        return this.vision.canObserve(unit.x, unit.y, target.x, target.y);
     }
 
     // Everything that stops a trigger being pulled regardless of what is being
@@ -94,6 +128,7 @@ export class CombatSystem {
         if (unit.breaching) return false;
         if (unit.pinned) return false;                  // head down under fire
         if (unit.fireTimer > 0 || unit.burstGapTimer > 0) return false;
+        if (unit.blinded > 0) return false;                        // flashbanged
         if (unit.reloadTimer > 0 || unit.mag <= 0) return false;   // empty or reloading
         if (unit.order.stance === 'hold') return false; // told to hold fire
         if (isSprinting(unit)) return false;            // weapon is down while running
@@ -140,7 +175,7 @@ export class CombatSystem {
         unit.aimAngle = Math.atan2(order.y - unit.y, order.x - unit.x);
 
         if (unit.breaching || unit.grenadeTimer > 0 || unit.fireTimer > 0) return;
-        if (unit.grenadesLeft <= 0 || !unit.stats.grenade) {
+        if (unit.kit[order.kind] <= 0) {
             unit.order.throwAt = null;
             return;
         }
@@ -148,15 +183,15 @@ export class CombatSystem {
         error = Math.atan2(Math.sin(error), Math.cos(error));
         if (Math.abs(error) > AIM_TOLERANCE) return;
 
-        this.throwGrenade(unit, now, order);
+        this.throwGrenade(unit, now, order, order.kind);
         unit.order.throwAt = null;
     }
 
-    // Grenades are held back at knife range, when the charge is on cooldown, or
+    // Frags are held back at knife range, when the arm is on cooldown, or
     // whenever a squadmate is standing in the blast.
     mayThrow(unit, friendlies) {
         const grenade = unit.stats.grenade;
-        if (!grenade || unit.grenadesLeft <= 0 || unit.grenadeTimer > 0) return false;
+        if (!grenade || unit.kit.frag <= 0 || unit.grenadeTimer > 0) return false;
 
         const target = unit.target;
         const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
@@ -169,23 +204,31 @@ export class CombatSystem {
         return true;
     }
 
+    // Flight parameters for a throwable. The grenadier's frag keeps its own
+    // tuned block; everything else comes from the shared TOOLS table.
+    throwSpec(unit, kind) {
+        if (kind === 'frag' && unit.stats.grenade) return unit.stats.grenade;
+        return TOOLS[kind];
+    }
+
     // `target` is any {x, y}: the unit's current contact for an automatic throw,
     // or the spot the player picked for an aimed one.
-    throwGrenade(unit, now, target) {
-        const grenade = unit.stats.grenade;
+    throwGrenade(unit, now, target, kind = 'frag') {
+        const spec = this.throwSpec(unit, kind);
         const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
         const muzzleX = unit.x + Math.cos(angle) * (unit.radius + 10);
         const muzzleY = unit.y + Math.sin(angle) * (unit.radius + 10);
 
         this.projectiles.push({
             kind: 'grenade',
+            throwable: kind,
             x: muzzleX,
             y: muzzleY,
-            vx: Math.cos(angle) * grenade.speed,
-            vy: Math.sin(angle) * grenade.speed,
+            vx: Math.cos(angle) * spec.speed,
+            vy: Math.sin(angle) * spec.speed,
             aim: { x: target.x, y: target.y },
-            radius: grenade.radius,
-            damage: grenade.damage,
+            radius: spec.radius,
+            damage: spec.damage || 0,
             team: unit.team,
             owner: unit,
             travelled: 0,
@@ -203,8 +246,8 @@ export class CombatSystem {
         });
         unit.recoil = 1;
         unit.muzzleFlash = 60;
-        unit.grenadesLeft -= 1;
-        unit.grenadeTimer = grenade.cooldown;
+        unit.kit[kind] -= 1;
+        unit.grenadeTimer = spec.cooldown;
         unit.fireTimer = Math.max(unit.fireTimer, 700);
         this.noises.push({ x: unit.x, y: unit.y, team: unit.team, time: now });
     }
@@ -345,30 +388,81 @@ export class CombatSystem {
         this.projectiles = alive;
     }
 
-    // Blast damage falls off linearly to the edge of the radius, and only walls
-    // between the burst and a body spare it.
+    // What a throwable does when it lands. Smoke leaves a cloud, a flashbang
+    // blinds whoever was looking at it, everything else goes off.
     detonate(grenade, units) {
-        for (const unit of units) {
-            if (!unit.alive) continue;
-            const dist = Math.hypot(unit.x - grenade.x, unit.y - grenade.y);
-            if (dist > grenade.radius) continue;
-            if (!this.vision.hasLineOfSight(grenade.x, grenade.y, unit.x, unit.y)) continue;
-
-            const falloff = 1 - dist / grenade.radius;
-            const scale = unit.team === grenade.team ? BLAST_FRIENDLY_SCALE : 1;
-            const standing = unit.alive;
-            unit.takeDamage(grenade.damage * falloff * scale);
-            if (standing && !unit.alive) this.events.push({ type: 'down', x: unit.x, y: unit.y });
-            unit.addSuppression(SUPPRESSION.threshold * falloff);
+        if (grenade.throwable === 'smoke') {
+            this.addCloud(grenade.x, grenade.y);
+            return;
         }
-        this.explosions.push({ x: grenade.x, y: grenade.y, radius: grenade.radius, ttl: EXPLOSION_TTL });
-        this.events.push({
-            type: 'explosion',
-            kind: 'explosion',
+        if (grenade.throwable === 'flash') {
+            this.flash(grenade.x, grenade.y, units);
+            return;
+        }
+        this.explode({
             x: grenade.x,
             y: grenade.y,
             radius: grenade.radius,
+            damage: grenade.damage,
+            team: grenade.team,
+        }, units);
+    }
+
+    // Blast damage falls off linearly to the edge of the radius, and only walls
+    // between the burst and a body spare it — smoke does not.
+    explode(blast, units) {
+        for (const unit of units) {
+            if (!unit.alive) continue;
+            const dist = Math.hypot(unit.x - blast.x, unit.y - blast.y);
+            if (dist > blast.radius) continue;
+            if (!this.vision.hasLineOfSight(blast.x, blast.y, unit.x, unit.y)) continue;
+
+            const falloff = 1 - dist / blast.radius;
+            const scale = unit.team === blast.team ? BLAST_FRIENDLY_SCALE : 1;
+            const standing = unit.alive;
+            unit.takeDamage(blast.damage * falloff * scale);
+            if (standing && !unit.alive) this.events.push({ type: 'down', x: unit.x, y: unit.y });
+            unit.addSuppression(SUPPRESSION.threshold * falloff);
+        }
+        this.explosions.push({ x: blast.x, y: blast.y, radius: blast.radius, ttl: EXPLOSION_TTL });
+        this.events.push({
+            type: blast.sound || 'explosion',
+            kind: 'explosion',
+            x: blast.x,
+            y: blast.y,
+            radius: blast.radius,
         });
+    }
+
+    // A flashbang hurts nobody. It takes eyes and ears out of the fight for a
+    // few seconds, which is the whole point: a room can be entered without
+    // killing what is inside it.
+    flash(x, y, units) {
+        for (const unit of units) {
+            if (!unit.alive) continue;
+            const dist = Math.hypot(unit.x - x, unit.y - y);
+            if (dist > TOOLS.flash.radius) continue;
+            // Behind a wall is behind a wall — you have to have seen it.
+            if (!this.vision.hasLineOfSight(x, y, unit.x, unit.y)) continue;
+            const falloff = 1 - dist / TOOLS.flash.radius;
+            unit.blind(TOOLS.flash.blindTime * falloff);
+            unit.addSuppression(SUPPRESSION.max * falloff);
+        }
+        this.explosions.push({ x, y, radius: TOOLS.flash.radius, ttl: EXPLOSION_TTL, flash: true });
+        this.events.push({ type: 'flashBang', kind: 'flash', x, y, radius: TOOLS.flash.radius });
+    }
+
+    // A breaching charge: the door goes in and whatever is behind it catches the
+    // blast. Fired by the scene once the door has actually opened.
+    blastDoor(door, units) {
+        this.explode({
+            x: door.x + door.w / 2,
+            y: door.y + door.h / 2,
+            radius: TOOLS.charge.radius,
+            damage: TOOLS.charge.damage,
+            team: 'friendly',
+            sound: 'charge',
+        }, units);
     }
 
     hitsGeometry(x, y) {
