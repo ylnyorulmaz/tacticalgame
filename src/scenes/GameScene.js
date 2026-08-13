@@ -12,6 +12,7 @@ import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
 import { updateCover } from '../systems/cover.js';
 import * as orders from '../systems/orders.js';
+import { AlarmSystem, ALARMED } from '../systems/alarm.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
@@ -48,6 +49,7 @@ export class GameScene extends Phaser.Scene {
         // Shared with the menu scene: one sound bank, one mute state.
         this.audio = getAudio(this);
         this.effects = new EffectSystem();
+        this.alarm = new AlarmSystem();
 
         this.squad = level.squad.map((spec) => new Unit(spec));
         this.hostiles = level.hostiles.map((spec) => {
@@ -62,9 +64,11 @@ export class GameScene extends Phaser.Scene {
         this.ctx = {
             vision: this.vision,
             nav: this.nav,
+            level,
             friendlies: this.squad,
             hostiles: this.hostiles,
             noises: this.combat.noises,
+            spawnHostile: (cls, x, y) => this.spawnHostile(cls, x, y),
             // A shut door is pathable (you can plan through it) but not walkable
             // until it is actually breached open.
             blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2),
@@ -90,6 +94,18 @@ export class GameScene extends Phaser.Scene {
 
         // Only the first scene in the config array boots on its own.
         if (!this.scene.isActive('hud')) this.scene.launch('hud');
+    }
+
+    // A reinforcement walking onto the map mid-mission. The arrays the systems
+    // hold are the same ones, so pushing is enough — nothing needs rebuilding.
+    spawnHostile(cls, x, y) {
+        const cell = this.nav.cellAtWorld(x, y);
+        const open = this.nav.nearestOpen(cell.cx, cell.cy);
+        const at = open ? { x: open.cx * CELL + CELL / 2, y: open.cy * CELL + CELL / 2 } : { x, y };
+        const unit = new Unit({ cls, x: at.x, y: at.y, facing: Math.PI / 2 });
+        this.hostiles.push(unit);
+        this.units.push(unit);
+        return unit;
     }
 
     openDoor(door, chargedBy = null) {
@@ -274,6 +290,8 @@ export class GameScene extends Phaser.Scene {
             this.vision.setClouds(this.combat.clouds);
             updateSupport(this.units, dt, this.combat.events);
             this.effects.update(dt, this.combat.projectiles);
+            this.alarm.update(dt, this.ctx);
+            this.announceAlarm();
             this.checkOutcome();
         }
 
@@ -336,6 +354,22 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
+    // The alarm reports itself: a line in the feed and, when it goes up, a sound
+    // the player will learn to dread.
+    announceAlarm() {
+        for (const change of this.alarm.drain()) {
+            if (change === ALARMED) {
+                this.audio.play('alarm');
+                this.pushFeed('ALARM RAISED — they know you are here', '#ff6b6b');
+            } else if (change === 'reinforcements') {
+                this.audio.play('alarm');
+                this.pushFeed('Reinforcements inbound', '#ff8a3a');
+            } else {
+                this.pushFeed('Something got their attention', '#ffd24a');
+            }
+        }
+    }
+
     pushFeed(text, color) {
         this.feed.unshift({ text, color, at: this.time.now });
         this.feed.length = Math.min(this.feed.length, 5);
@@ -375,6 +409,7 @@ export class GameScene extends Phaser.Scene {
             squadAlive: this.squad.filter((u) => u.alive).length,
             squadDown: this.squad.filter((u) => u.downed).length,
             feed: this.feed,
+            alarm: this.alarm.state,
             paused: this.paused,
             outcome: this.outcome,
             muted: this.audio.muted || !this.audio.available,

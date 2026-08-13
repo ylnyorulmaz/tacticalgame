@@ -95,6 +95,9 @@ export function build() {
             // Roams the western flank — the one that finds you first.
             { cls: 'hostileShotgun', x: 664, y: 756, facing: Math.PI / 2, route: [{ x: 664, y: 756 }, { x: 840, y: 1080 }] },
         ],
+        // Open ground all round, so reinforcements simply drive up: the
+        // northern track and the eastern edge.
+        reinforce: [{ x: 1200, y: 120 }, { x: 2280, y: 620 }],
         cameraStart: { x: 700, y: 1120 },
     };
 }

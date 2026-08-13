@@ -2,13 +2,14 @@
 // being told to; hostiles only shoot once their brain has flipped to ENGAGE.
 
 import { rectContains, solidRects, sandbagArcs, pointInSandbag } from '../level.js';
-import { SUPPRESSION, COVER, ORDERS, TOOLS } from '../config.js';
+import { SUPPRESSION, COVER, ORDERS, TOOLS, AI, ALARM } from '../config.js';
 import { isSprinting } from './orders.js';
 
 const AIM_TOLERANCE = 0.2;      // rad of error allowed before the trigger is pulled
 const SUBSTEP = 8;              // px per collision substep, keeps tracers from tunnelling
 const BLAST_FRIENDLY_SCALE = 0.5;
 const EXPLOSION_TTL = 320;      // ms the detonation flash stays on screen
+const NOISE_MEMORY = 900;       // ms a gunshot stays audible to the AI
 
 export class CombatSystem {
     constructor(level, vision) {
@@ -65,7 +66,12 @@ export class CombatSystem {
         this.stepClouds(dt);
         for (const blast of this.explosions) blast.ttl -= dt;
         this.explosions = this.explosions.filter((blast) => blast.ttl > 0);
-        this.noises = this.noises.filter((n) => now - n.time < 900);
+        // Pruned in place, not reassigned: the hostile brain and the alarm each
+        // hold a reference to this array, and swapping it for a new one leaves
+        // them reading a list that never changes again.
+        for (let i = this.noises.length - 1; i >= 0; i--) {
+            if (now - this.noises[i].time >= NOISE_MEMORY) this.noises.splice(i, 1);
+        }
     }
 
     // Smoke blooms, hangs, then thins out. The radius is a function of age, and
@@ -249,7 +255,8 @@ export class CombatSystem {
         unit.kit[kind] -= 1;
         unit.grenadeTimer = spec.cooldown;
         unit.fireTimer = Math.max(unit.fireTimer, 700);
-        this.noises.push({ x: unit.x, y: unit.y, team: unit.team, time: now });
+        // A canister landing is loud whatever is inside it.
+        this.noise(unit, now, true);
     }
 
     fire(unit, now, opts = {}) {
@@ -289,6 +296,7 @@ export class CombatSystem {
             angle: unit.facing,
             cls: unit.cls,
             unit: unit.id,
+            suppressed: !!weapon.suppressed,
         });
         unit.fireTimer = weapon.cooldown;
         unit.muzzleFlash = 95;
@@ -304,7 +312,21 @@ export class CombatSystem {
             unit.burstLeft = weapon.burst;
             unit.burstGapTimer = weapon.burstGap;
         }
-        this.noises.push({ x: unit.x, y: unit.y, team: unit.team, time: now });
+        this.noise(unit, now, !weapon.suppressed);
+    }
+
+    // What the shot sounded like from a distance. A suppressed weapon carries a
+    // fraction as far and never sets the alarm off by itself, which is the whole
+    // reason to bring one.
+    noise(unit, now, loud) {
+        this.noises.push({
+            x: unit.x,
+            y: unit.y,
+            team: unit.team,
+            time: now,
+            loud,
+            radius: loud ? AI.hearingRange : AI.hearingRange * ALARM.suppressedHearingScale,
+        });
     }
 
     stepProjectiles(dt, units) {

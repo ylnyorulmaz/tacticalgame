@@ -13,7 +13,8 @@ import { Unit, doorAtPoint } from '../src/systems/units.js';
 import { updateHostile } from '../src/systems/ai.js';
 import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
-import { SUPPRESSION, UNIT_CLASSES, TOOLS } from '../src/config.js';
+import { AlarmSystem, CALM, ALARMED } from '../src/systems/alarm.js';
+import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM } from '../src/config.js';
 
 export const name = 'tactics';
 
@@ -26,19 +27,21 @@ function world(mapId = 'compound') {
     const vision = new VisionSystem(level);
     const nav = new NavGrid(level);
     const combat = new CombatSystem(level, vision);
+    const alarm = new AlarmSystem();
     const units = [];
     const w = {
-        level, vision, nav, combat, units,
+        level, vision, nav, combat, alarm, units,
         now: 0,
         friendlies: [],
         hostiles: [],
     };
 
     w.ctx = {
-        vision, nav,
+        vision, nav, level,
         friendlies: w.friendlies,
         hostiles: w.hostiles,
         noises: combat.noises,
+        spawnHostile: (cls, x, y) => w.add(cls, x, y),
         blocked: (x, y) => nav.isBlockedWorld(x, y) || !!doorAtPoint(level.doors, x, y, 2),
         closedDoorAt: (x, y) => doorAtPoint(level.doors, x, y, 10),
         openDoor: (door, chargedBy) => {
@@ -67,6 +70,8 @@ function world(mapId = 'compound') {
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
             vision.setClouds(combat.clouds);
+            alarm.update(STEP, w.ctx);
+            alarm.drain();
             combat.events.length = 0;
         }
     };
@@ -82,6 +87,8 @@ function world(mapId = 'compound') {
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
             vision.setClouds(combat.clouds);
+            alarm.update(STEP, w.ctx);
+            alarm.drain();
             shots += combat.events.filter(
                 (e) => e.kind === 'shot' && (!who || e.unit === who.id),
             ).length;
@@ -107,6 +114,51 @@ export function run(t) {
     smoke(t);
     flashbang(t);
     breachingCharge(t);
+    alarm(t);
+}
+
+// The garrison's state of mind. The whole reason to carry a suppressed weapon is
+// that it does not move this needle, so that is what gets checked.
+function alarm(t) {
+    // An unsuppressed shot inside somebody's earshot is the alarm.
+    const loud = world();
+    const rifleman = loud.add('operator', OPEN.x, OPEN.y);
+    const listener = loud.add('hostile', OPEN.x + 400, OPEN.y + 400);
+    listener.maxHp = 1e6;
+    listener.hp = 1e6;
+    t.equal(loud.alarm.state, CALM, 'a mission starts undetected');
+
+    // Let the mission run first. The brain and the alarm hold a reference to the
+    // noise list, so a shot fired minutes in has to be as audible as the first
+    // one — pruning it by reassignment used to leave them both deaf.
+    loud.run(3000);
+    const heard = loud.ctx.noises;
+    loud.combat.fire(rifleman, loud.now);
+    t.ok(heard.length > 0, 'a shot lands in the list the AI is actually reading');
+    loud.run(100);
+    t.equal(loud.alarm.state, ALARMED, 'an unsuppressed shot in earshot raises the alarm');
+
+    // The same shot from the suppressed weapon does not.
+    const quiet = world();
+    const marksman = quiet.add('marksman', OPEN.x, OPEN.y);
+    const other = quiet.add('hostile', OPEN.x + 400, OPEN.y + 400);
+    other.maxHp = 1e6;
+    other.hp = 1e6;
+    t.ok(marksman.stats.weapon.suppressed, 'the marksman carries the quiet weapon');
+    quiet.combat.fire(marksman, quiet.now);
+    quiet.run(100);
+    t.ok(quiet.alarm.state !== ALARMED, `a suppressed shot does not (${quiet.alarm.state})`);
+
+    // Exactly one wave arrives, and it comes from the map's entry points.
+    const before = loud.hostiles.length;
+    loud.run(ALARM.reinforceDelay + 500);
+    const arrived = loud.hostiles.length - before;
+    t.equal(arrived, ALARM.wave.length, `one wave of reinforcements arrives (${arrived})`);
+    t.ok(loud.alarm.waveSent, 'and the wave is marked as sent');
+
+    loud.run(ALARM.reinforceDelay * 2);
+    t.equal(loud.hostiles.length - before, ALARM.wave.length, 'and no more come after it');
+    t.ok(loud.alarm.everAlarmed, 'the mission remembers that it went loud');
 }
 
 // Smoke is the one occluder that stops eyes without stopping bullets. That split

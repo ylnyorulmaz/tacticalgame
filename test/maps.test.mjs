@@ -53,6 +53,22 @@ export function run(t) {
         }
         t.empty(unreachable, `${label}: everything is reachable from the squad`);
 
+        // Reinforcements walk in from these, so a point inside a wall or cut off
+        // from the map would be a wave that never arrives.
+        const badEntries = [];
+        for (const entry of level.reinforce || []) {
+            const where = `entry at ${entry.x},${entry.y}`;
+            if (entry.x < 0 || entry.y < 0 || entry.x > WORLD.width || entry.y > WORLD.height) {
+                badEntries.push(`${where} is off the map`);
+            } else if (inGeometry(entry.x, entry.y)) {
+                badEntries.push(`${where} is inside geometry`);
+            } else if (!nav.findPath(entry.x, entry.y, from.x, from.y)) {
+                badEntries.push(`${where} cannot reach the squad`);
+            }
+        }
+        t.ok((level.reinforce || []).length > 0, `${label}: has reinforcement entry points`);
+        t.empty(badEntries, `${label}: reinforcements can actually walk in`);
+
         const badRoutes = [];
         for (const hostile of level.hostiles) {
             if (!hostile.route) continue;

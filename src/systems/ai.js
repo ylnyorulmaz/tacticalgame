@@ -76,8 +76,11 @@ export function updateHostile(unit, dt, ctx) {
     brain.flankTimer = 0;
 
     // Gunfire nearby is enough to go looking, even with nothing in sight.
+    // Each noise carries its own reach: a suppressed shot is audible from a
+    // fraction of the distance an unsuppressed one is.
     const noise = ctx.noises.find(
-        (n) => n.team !== unit.team && Math.hypot(n.x - unit.x, n.y - unit.y) < AI.hearingRange,
+        (n) => n.team !== unit.team
+            && Math.hypot(n.x - unit.x, n.y - unit.y) < (n.radius ?? AI.hearingRange),
     );
     if (noise && (brain.state === 'idle' || brain.state === 'patrol')) {
         brain.lastKnown = { x: noise.x, y: noise.y };

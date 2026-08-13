@@ -81,6 +81,9 @@ export function build() {
             { cls: 'hostileHeavy', x: 1930, y: 660, facing: Math.PI, route: null },
         ],
         // Where the camera opens: on the squad, with the objective just up-screen.
+        // Where a second team walks in from once the alarm goes up: the road
+        // to the north and the yard track to the east.
+        reinforce: [{ x: 1240, y: 120 }, { x: 2240, y: 700 }],
         cameraStart: { x: 1180, y: 1060 },
     };
 }

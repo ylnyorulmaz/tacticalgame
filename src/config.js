@@ -171,8 +171,11 @@ export const UNIT_CLASSES = {
         turnSpeed: 5,
         breachTime: 1700,
         weapon: {
-            name: 'Marksman Rifle',
-            sound: 'dmr',
+            // Suppressed: the squad's one quiet weapon. A kill with it does not
+            // raise the alarm, though the body still will once somebody finds it.
+            name: 'Suppressed DMR',
+            sound: 'suppressed',
+            suppressed: true,
             damage: 52,
             cooldown: 1500,
             spread: 0.008,
@@ -359,6 +362,14 @@ export const AI = {
     retreatHp: 0.3,
     retreatDistance: 420,
     retreatTime: 4000,
+};
+
+// The garrison as a whole, rather than one hostile at a time. Going loud is a
+// decision with a cost: a second team walks in.
+export const ALARM = {
+    reinforceDelay: 9000,       // ms from the alarm going up to the wave arriving
+    wave: ['hostile', 'hostileShotgun', 'hostile'],
+    suppressedHearingScale: 0.35,   // how far a suppressed shot carries
 };
 
 // Being tucked behind a barricade makes you a harder target, on top of the

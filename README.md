@@ -169,6 +169,17 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   and hurt nobody, which is what makes a room enterable without a grenade.
   Breaching charges are the loud alternative to forcing a door by hand — a
   stacked breacher told to GO blows it and catches whoever was behind it.
+- **An alarm worth avoiding.** The garrison has one state of mind for the whole
+  map: **undetected**, **searching**, or **alarm**. A hostile with eyes on you,
+  a body somebody has found, or an unsuppressed shot inside earshot each take it
+  straight to alarm — and then patrol routes are abandoned, everyone converges on
+  your last known position, and a single wave of reinforcements walks in from the
+  map's entry roads. One wave, once: the point is pressure on a mission that has
+  gone loud, not a faucet that makes it unwinnable. The marksman's rifle is
+  suppressed, so its shots carry a third as far and never raise the alarm by
+  themselves — though the body will, once somebody finds it. `src/systems/alarm.js`
+  reads world state rather than being told about events, so there is no
+  bookkeeping to drift out of sync.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
   With orders in the game the pause is a planning phase rather than a freeze

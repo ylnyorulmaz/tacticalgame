@@ -11,6 +11,11 @@ import { Palette } from './palette.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
 const KIT_COLORS = { frag: 0xff8a3a, smoke: 0xdfe6e1, flash: 0xfff2a8, charge: 0xff5a3a };
+const ALERT_LABELS = {
+    calm: { text: '● UNDETECTED', color: '#7df07d' },
+    suspicious: { text: '● SEARCHING', color: '#ffd24a' },
+    alarmed: { text: '● ALARM', color: '#ff6b6b' },
+};
 const BLOCKS = 10;
 const BLOCK_W = 17;
 const BLOCK_H = 10;
@@ -59,6 +64,7 @@ export class HudScene extends Phaser.Scene {
             }).setOrigin(origin, 0).setShadow(0, 2, '#00000088', 4);
 
         this.statusText = label(20, 16, 21);
+        this.alertText = label(0, 18, 18, 0, '#7df07d');
         this.hintText = label(20, VIEW.height - 34, 15, 0, '#e8f0e8');
         this.hintText.setAlpha(0.85);
 
@@ -142,6 +148,13 @@ export class HudScene extends Phaser.Scene {
         this.statusText.setText(
             `HOSTILES ${state.hostilesDown}/${state.hostilesTotal} DOWN    SQUAD ${state.squadAlive}/${state.squadTotal}${casualties}${audio}`,
         );
+
+        // How much the garrison knows, which is the thing a quiet approach is
+        // trying to keep down.
+        const alert = ALERT_LABELS[state.alarm] || ALERT_LABELS.calm;
+        this.alertText.setPosition(this.statusText.x + this.statusText.width + 22, 18);
+        this.alertText.setText(alert.text);
+        this.alertText.setColor(alert.color);
         this.pauseText.setText(state.paused ? '❚❚  PAUSED — issue orders, then press SPACE' : '');
 
         // The HUD outlives a mission restart, so it has to notice a new level.
