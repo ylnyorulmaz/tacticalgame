@@ -1,6 +1,6 @@
 # Tactical CQB — top-down squad prototype
 
-A browser game about clearing a building with a four-man squad: click to select,
+A browser game about clearing a building with a six-man squad: click to select,
 right-click to move, and watch line of sight peel the fog off the map one room at
 a time. Pausable real-time — hit `Space`, plan, unpause, watch it play out.
 
@@ -34,7 +34,7 @@ automatic offline fallback, so the game still boots without a network.
 | Shift + right click | Queue another waypoint |
 | `Space` | Pause / unpause — orders can still be issued while paused |
 | `Tab` | Cycle through the squad |
-| `1`–`4` | Select a specific unit (hold Shift to add) |
+| `1`–`6` | Select a specific unit (hold Shift to add) |
 | `Ctrl`+`A` | Select the whole squad |
 | `Esc` | Clear selection |
 | `W A S D` / arrows | Pan the camera |
@@ -43,10 +43,24 @@ automatic offline fallback, so the game still boots without a network.
 
 ## What is in the mission
 
-- **Two unit types.** *Operator* — carbine, long reach, balanced. *Breacher* —
-  shotgun, close-range punch, tougher, and forces doors in about half the time.
+- **Six unit types, one of each deployed.** Every class carries a mechanic of its
+  own, not just a different rifle:
+
+  | Class | Plays like |
+  | --- | --- |
+  | **Operator** | Carbine, long reach, balanced — the baseline |
+  | **Breacher** | Shotgun, close-range punch, tough, forces doors twice as fast |
+  | **Grenadier** | Four grenades that arc over cover and detonate for area damage; won't throw when a squadmate is in the blast |
+  | **Medic** | Heals nearby squadmates, and revives downed ones before they bleed out |
+  | **Marksman** | Very long range and heavy single shots, but must be stationary to fire |
+  | **Machine Gunner** | Wide, fast, sustained fire that pins hostiles so they stop shooting back |
+
   The bottom-right card shows the selected unit's Speed / Firepower /
-  Survivability / Range, read straight off the same stat table the simulation uses.
+  Survivability / Range, read straight off the same stat table the simulation
+  uses, plus its ability line and remaining grenades.
+- **Casualties are recoverable.** A squadmate at zero HP goes *down* rather than
+  dying: the ring around them counts off their bleed-out. Get the Medic there in
+  time and they're back on their feet; don't, and they're gone for good.
 - **Click-to-move with pathfinding.** A* over a walkability grid, then a
   string-pull pass so units walk clean diagonals instead of staircases. Units
   slide along walls rather than sticking to them.
@@ -60,11 +74,13 @@ automatic offline fallback, so the game still boots without a network.
 - **Doors.** Both interior doors start shut and block sight and movement. Walk a
   unit into one and it breaches it open, flooding the room with light — and
   usually with a firefight.
-- **Hostiles.** Four of them: two static sentries watching fixed arcs, one
-  patrolling the back room, one on the sandbag position outside. Each runs
-  PATROL/IDLE → ALERT → ENGAGE → SEARCH, using the *same* line-of-sight test the
-  player's fog uses, so if you cannot see them, they cannot see you. Gunfire
-  within earshot pulls them off their post to investigate.
+- **Hostiles.** Six of them in three flavours: regulars holding arcs and patrol
+  routes, a **Shotgunner** that rushes whoever it hears instead of holding
+  ground, and a **Heavy** — slow, tough, long reach — covering the yard. Each
+  runs PATROL/IDLE → ALERT → ENGAGE → SEARCH, using the *same* line-of-sight test
+  the player's fog uses, so if you cannot see them, they cannot see you. Gunfire
+  within earshot pulls them off their post to investigate, and enough incoming
+  fire pins them in place.
 - **Combat.** Fire is automatic on anything visible and in range. Bullets are
   simulated tracers that stop on walls, wrecks and sandbags. At zero HP a unit
   drops its weapon and is marked with a black X.
@@ -82,8 +98,9 @@ src/level.js            the map: walls, doors, props, trees, spawns, patrols
 src/scenes/GameScene.js per-frame orchestration, orders, pause, outcome
 src/systems/nav.js      walk grid, A*, path smoothing
 src/systems/vision.js   line of sight, visibility polygons, fog layers
-src/systems/units.js    unit state, movement, breaching, damage
-src/systems/combat.js   weapons, tracers, target acquisition
+src/systems/units.js    unit state, movement, breaching, damage, downed
+src/systems/combat.js   weapons, tracers, grenades, suppression
+src/systems/support.js  medic healing and revives
 src/systems/ai.js       hostile state machine
 src/systems/input.js    selection, orders, camera
 src/render/terrain.js   baked scenery: grass, grid, trees, building, props

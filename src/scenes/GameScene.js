@@ -9,6 +9,7 @@ import { VisionSystem, FogRenderer } from '../systems/vision.js';
 import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
+import { updateSupport } from '../systems/support.js';
 import { InputController } from '../systems/input.js';
 import { buildTerrain } from '../render/terrain.js';
 import { EntityRenderer } from '../render/entities.js';
@@ -36,7 +37,7 @@ export class GameScene extends Phaser.Scene {
 
         this.squad = LEVEL.squad.map((spec) => new Unit(spec));
         this.hostiles = LEVEL.hostiles.map((spec) => {
-            const unit = new Unit({ cls: 'hostile', x: spec.x, y: spec.y, facing: spec.facing });
+            const unit = new Unit({ cls: spec.cls || 'hostile', x: spec.x, y: spec.y, facing: spec.facing });
             unit.route = spec.route;
             unit.ai.state = spec.route ? 'patrol' : 'idle';
             return unit;
@@ -143,6 +144,7 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.update(dt, this.ctx);
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             this.combat.update(dt, this.units, time);
+            updateSupport(this.units, dt);
             this.checkOutcome();
         }
 
@@ -159,6 +161,8 @@ export class GameScene extends Phaser.Scene {
         this.entities.draw({
             units: this.units,
             projectiles: this.combat.projectiles,
+            explosions: this.combat.explosions,
+            time,
             vision: this.vision,
             friendlies: this.squad,
             selected: this.selected,
@@ -166,17 +170,21 @@ export class GameScene extends Phaser.Scene {
     }
 
     checkOutcome() {
+        // A downed squadmate is not a lost one until it bleeds out.
         if (this.hostiles.every((u) => !u.alive)) this.outcome = 'win';
-        else if (this.squad.every((u) => !u.alive)) this.outcome = 'lose';
+        else if (this.squad.every((u) => !u.alive && !u.downed)) this.outcome = 'lose';
     }
 
     getHudState() {
+        const lead = this.selected.length > 0 ? this.selected[0] : null;
         return {
-            cls: this.selected.length > 0 ? this.selected[0].cls : null,
+            cls: lead ? lead.cls : null,
+            grenadesLeft: lead ? lead.grenadesLeft : 0,
             hostilesTotal: this.hostiles.length,
             hostilesDown: this.hostiles.filter((u) => !u.alive).length,
             squadTotal: this.squad.length,
             squadAlive: this.squad.filter((u) => u.alive).length,
+            squadDown: this.squad.filter((u) => u.downed).length,
             paused: this.paused,
             outcome: this.outcome,
         };

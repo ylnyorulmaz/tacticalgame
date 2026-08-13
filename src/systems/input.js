@@ -36,8 +36,9 @@ export class InputController {
         });
         keys.on('keydown-ESC', () => scene.selectUnits([]));
         keys.on('keydown-R', () => scene.restartMission());
-        for (let i = 1; i <= 4; i++) {
-            keys.on(`keydown-${['ONE', 'TWO', 'THREE', 'FOUR'][i - 1]}`, (event) => {
+        const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];
+        for (let i = 1; i <= numberKeys.length; i++) {
+            keys.on(`keydown-${numberKeys[i - 1]}`, (event) => {
                 const unit = scene.squad[i - 1];
                 if (!unit || !unit.alive) return;
                 scene.selectUnits(event.shiftKey ? [...scene.selected, unit] : [unit]);

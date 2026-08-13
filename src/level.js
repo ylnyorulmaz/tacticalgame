@@ -96,21 +96,28 @@ export const LEVEL = {
     doors,
     props,
     trees: buildTrees(),
+    // One of each class, staged along the tree line south of the objective.
     squad: [
-        { cls: 'operator', x: 1044, y: 1286, facing: -Math.PI / 2 },
-        { cls: 'breacher', x: 1116, y: 1318, facing: -Math.PI / 2 },
-        { cls: 'operator', x: 1188, y: 1286, facing: -Math.PI / 2 },
-        { cls: 'breacher', x: 1260, y: 1318, facing: -Math.PI / 2 },
+        { cls: 'operator', x: 1000, y: 1288, facing: -Math.PI / 2 },
+        { cls: 'breacher', x: 1070, y: 1320, facing: -Math.PI / 2 },
+        { cls: 'grenadier', x: 1140, y: 1286, facing: -Math.PI / 2 },
+        { cls: 'medic', x: 1210, y: 1322, facing: -Math.PI / 2 },
+        { cls: 'marksman', x: 1280, y: 1288, facing: -Math.PI / 2 },
+        { cls: 'machinegunner', x: 1350, y: 1320, facing: -Math.PI / 2 },
     ],
     hostiles: [
         // Room A: watches the front door.
-        { x: 1010, y: 380, facing: Math.PI / 2, route: null },
+        { cls: 'hostile', x: 1010, y: 380, facing: Math.PI / 2, route: null },
         // Room B: static overwatch on the north-east corner.
-        { x: 1460, y: 320, facing: Math.PI, route: null },
+        { cls: 'hostile', x: 1460, y: 320, facing: Math.PI, route: null },
         // Room C: paces between the two ends of the back room.
-        { x: 1282, y: 560, facing: 0, route: [{ x: 1282, y: 560 }, { x: 1518, y: 592 }] },
+        { cls: 'hostile', x: 1282, y: 560, facing: 0, route: [{ x: 1282, y: 560 }, { x: 1518, y: 592 }] },
+        // Room C corner: rushes the inner door the moment it hears anything.
+        { cls: 'hostileShotgun', x: 1530, y: 500, facing: Math.PI, route: null },
         // Outside: mans the sandbag position.
-        { x: 1746, y: 676, facing: Math.PI / 2, route: [{ x: 1746, y: 676 }, { x: 1900, y: 800 }] },
+        { cls: 'hostile', x: 1746, y: 676, facing: Math.PI / 2, route: [{ x: 1746, y: 676 }, { x: 1900, y: 800 }] },
+        // Outside: covers the yard from behind the wreck.
+        { cls: 'hostileHeavy', x: 1930, y: 660, facing: Math.PI, route: null },
     ],
     // Where the camera opens: on the squad, with the objective just up-screen.
     cameraStart: { x: 1180, y: 1060 },

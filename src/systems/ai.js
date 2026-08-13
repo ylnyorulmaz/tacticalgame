@@ -8,14 +8,32 @@ export function updateHostile(unit, dt, ctx) {
     if (!unit.alive) return;
     const brain = unit.ai;
 
+    // Rounds cracking overhead stop everything else: no advancing, no patrolling.
+    if (unit.pinned) unit.stop();
+
     const contact = nearestVisible(unit, ctx);
     if (contact) {
         brain.lastKnown = { x: contact.x, y: contact.y };
         brain.contactTimer += dt;
         unit.aimAngle = Math.atan2(contact.y - unit.y, contact.x - unit.x);
         unit.travelAngle = unit.aimAngle;
-        unit.stop();
-        brain.state = brain.contactTimer >= AI.reactionTime ? 'engage' : 'alert';
+
+        // Aggressive types (the shotgunner) close in rather than trade fire at
+        // a range their weapon cannot reach.
+        const dist = Math.hypot(contact.x - unit.x, contact.y - unit.y);
+        const closing = unit.stats.aggressive && !unit.pinned && dist > unit.stats.weapon.range * 0.6;
+        if (closing) {
+            brain.chaseTimer -= dt;
+            if (brain.chaseTimer <= 0) {
+                ctx.repath(unit, contact);
+                brain.chaseTimer = 700;
+            }
+        } else {
+            unit.stop();
+        }
+
+        if (unit.pinned) brain.state = 'pinned';
+        else brain.state = brain.contactTimer >= AI.reactionTime ? 'engage' : 'alert';
         return;
     }
 
@@ -31,12 +49,13 @@ export function updateHostile(unit, dt, ctx) {
         return;
     }
 
-    if (brain.state === 'engage' || brain.state === 'alert') {
+    if (brain.state === 'engage' || brain.state === 'alert' || brain.state === 'pinned') {
         startSearch(unit, ctx);
         return;
     }
 
     if (brain.state === 'search') {
+        if (unit.pinned) return;
         brain.searchTimer -= dt;
         const arrived = !unit.path;
         if (brain.searchTimer <= 0 || arrived) {

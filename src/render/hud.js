@@ -3,7 +3,7 @@
 // banner and the end-of-mission overlay.
 
 import { VIEW, COLORS, UNIT_CLASSES } from '../config.js';
-import { fillRotatedRect } from './entities.js';
+import { fillRotatedRect, drawCrossIcon, GUN } from './entities.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
 const BLOCKS = 10;
@@ -34,6 +34,7 @@ export class HudScene extends Phaser.Scene {
 
         this.cardName = label(VIEW.width - 24, VIEW.height - 178, 26, 1);
         this.cardWeapon = label(VIEW.width - 24, VIEW.height - 148, 15, 1, '#cfe9ff');
+        this.cardAbility = label(VIEW.width - 24, VIEW.height - 130, 13, 1, '#ffd24a');
         this.barLabels = BAR_ORDER.map((name, i) =>
             label(VIEW.width - 24 - BLOCKS * (BLOCK_W + BLOCK_GAP) - 12, VIEW.height - 120 + i * 26, 15, 1),
         );
@@ -47,7 +48,7 @@ export class HudScene extends Phaser.Scene {
         this.outcomeHint = label(VIEW.width / 2, VIEW.height / 2 + 20, 20, 0.5);
         this.outcomeHint.setOrigin(0.5, 0.5);
 
-        this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab cycle · WASD/wheel camera · R restart');
+        this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab / 1-6 select · WASD/wheel camera · R restart');
 
         this.scale.on('resize', this.layout, this);
         this.layout();
@@ -57,8 +58,9 @@ export class HudScene extends Phaser.Scene {
         const w = this.scale.gameSize.width;
         const h = this.scale.gameSize.height;
         this.hintText.setPosition(20, h - 34);
-        this.cardName.setPosition(w - 24, h - 182);
-        this.cardWeapon.setPosition(w - 24, h - 152);
+        this.cardName.setPosition(w - 24, h - 196);
+        this.cardWeapon.setPosition(w - 24, h - 166);
+        this.cardAbility.setPosition(w - 24, h - 146);
         this.barLabels.forEach((text, i) =>
             text.setPosition(w - 24 - BLOCKS * (BLOCK_W + BLOCK_GAP) - 12, h - 122 + i * 26),
         );
@@ -75,12 +77,13 @@ export class HudScene extends Phaser.Scene {
         const h = this.scale.gameSize.height;
         this.gfx.clear();
 
+        const casualties = state.squadDown > 0 ? `    ${state.squadDown} DOWN` : '';
         this.statusText.setText(
-            `HOSTILES ${state.hostilesDown}/${state.hostilesTotal} DOWN    SQUAD ${state.squadAlive}/${state.squadTotal}`,
+            `HOSTILES ${state.hostilesDown}/${state.hostilesTotal} DOWN    SQUAD ${state.squadAlive}/${state.squadTotal}${casualties}`,
         );
         this.pauseText.setText(state.paused ? '❚❚  PAUSED — issue orders, then press SPACE' : '');
 
-        this.drawCard(state.cls, w, h);
+        this.drawCard(state, w, h);
 
         if (state.outcome) {
             this.gfx.fillStyle(0x000000, 0.55);
@@ -95,10 +98,12 @@ export class HudScene extends Phaser.Scene {
         }
     }
 
-    drawCard(clsId, w, h) {
+    drawCard(state, w, h) {
+        const clsId = state.cls;
         if (!clsId) {
             this.cardName.setText('NO UNIT SELECTED');
             this.cardWeapon.setText('');
+            this.cardAbility.setText('');
             this.barLabels.forEach((t) => t.setAlpha(0.25));
             return;
         }
@@ -106,26 +111,46 @@ export class HudScene extends Phaser.Scene {
         this.barLabels.forEach((t) => t.setAlpha(1));
         this.cardName.setText(cls.name);
         this.cardWeapon.setText(cls.weapon.name);
+        this.cardAbility.setText(cls.ability || '');
 
         const barsRight = w - 24;
         const barsLeft = barsRight - BLOCKS * (BLOCK_W + BLOCK_GAP);
 
-        // Unit glyph: the same circle-and-rifle the unit is drawn with on the map.
-        const glyphX = barsLeft - 74;
+        // Unit glyph: the same circle-and-weapon the unit is drawn with on the
+        // map, read from the shared silhouette table so the two cannot drift.
+        const glyph = GUN[cls.id] || GUN.operator;
+        const glyphX = barsLeft - 78;
         const glyphY = h - 168;
         const angle = -0.42;
         const r = 17;
+        const gunX = glyphX + Math.cos(angle) * r * 0.55 - Math.sin(angle) * r * 0.3;
+        const gunY = glyphY + Math.sin(angle) * r * 0.55 + Math.cos(angle) * r * 0.3;
+
         this.gfx.fillStyle(COLORS.friendly, 1);
         this.gfx.fillCircle(glyphX, glyphY, r);
         this.gfx.fillStyle(COLORS.gun, 1);
-        fillRotatedRect(
-            this.gfx,
-            glyphX + Math.cos(angle) * r * 0.55 - Math.sin(angle) * r * 0.3,
-            glyphY + Math.sin(angle) * r * 0.55 + Math.cos(angle) * r * 0.3,
-            cls.id === 'breacher' ? 30 : 42,
-            cls.id === 'breacher' ? 11 : 8,
-            angle,
-        );
+        fillRotatedRect(this.gfx, gunX, gunY, glyph.length * 1.1, glyph.width * 1.1, angle);
+        if (glyph.bipod) {
+            fillRotatedRect(
+                this.gfx,
+                gunX + Math.cos(angle) * glyph.length * 0.37,
+                gunY + Math.sin(angle) * glyph.length * 0.37,
+                4,
+                22,
+                angle,
+            );
+        }
+        if (glyph.icon === 'cross') drawCrossIcon(this.gfx, { x: glyphX, y: glyphY }, 1.15);
+
+        // Grenade charges, so you can see when the grenadier has run dry.
+        if (cls.grenade) {
+            for (let i = 0; i < cls.grenade.count; i++) {
+                const x = glyphX - 22 + i * 15;
+                const spent = i >= state.grenadesLeft;
+                this.gfx.fillStyle(spent ? COLORS.hud : 0xffd24a, spent ? 0.3 : 1);
+                this.gfx.fillCircle(x, glyphY + 30, 5);
+            }
+        }
 
         BAR_ORDER.forEach((name, row) => {
             const filled = cls.bars[name];
