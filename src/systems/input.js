@@ -39,7 +39,10 @@ export class InputController {
             event.preventDefault();
             scene.cycleSelection();
         });
-        keys.on('keydown-ESC', () => scene.selectUnits([]));
+        keys.on('keydown-ESC', () => {
+            if (scene.outcome) scene.returnToMenu();
+            else scene.selectUnits([]);
+        });
         keys.on('keydown-R', () => scene.restartMission());
         keys.on('keydown-M', () => scene.audio.toggleMute());
         const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];
@@ -75,7 +78,14 @@ export class InputController {
         if (this.scene.selected.length > 0) this.scene.audio.play('select');
     }
 
+    // The HUD scene sits on top; a click on the roster or minimap belongs to it.
+    overUi(pointer) {
+        const hud = this.scene.scene.get('hud');
+        return !!hud && hud.scene.isActive() && hud.hitsUi && hud.hitsUi(pointer.x, pointer.y);
+    }
+
     onPointerDown(pointer) {
+        if (this.overUi(pointer)) return;
         if (pointer.middleButtonDown()) {
             this.panFrom = { x: pointer.x, y: pointer.y, scrollX: this.cam.scrollX, scrollY: this.cam.scrollY };
             return;
@@ -104,6 +114,10 @@ export class InputController {
     }
 
     onPointerUp(pointer) {
+        if (this.overUi(pointer) && !this.dragging) {
+            this.dragStart = null;
+            return;
+        }
         if (pointer.button === 1) {
             this.panFrom = null;
             return;

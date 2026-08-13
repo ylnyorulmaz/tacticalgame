@@ -40,11 +40,17 @@
        Check your connection, or make sure the <code>vendor/</code> folder was served alongside this page.</p>
 </div>
 
-<!-- Engine: CDN first, vendored copy as offline fallback. -->
+<!-- Engine and audio: CDN first, vendored copies as offline fallback. -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 <script>
     if (!window.Phaser) {
         document.write('<script src="vendor/phaser.min.js"><\/script>');
+    }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/howler@2.2.4/dist/howler.min.js"></script>
+<script>
+    if (!window.Howl) {
+        document.write('<script src="vendor/howler.min.js"><\/script>');
     }
 </script>
 <script>

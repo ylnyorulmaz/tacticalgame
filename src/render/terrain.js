@@ -3,7 +3,7 @@
 // changes at runtime except doors, which are drawn separately in entities.js.
 
 import { WORLD, COLORS } from '../config.js';
-import { LEVEL, SANDBAG_HALF_SPREAD } from '../level.js';
+import { SANDBAG_HALF_SPREAD } from '../level.js';
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -16,7 +16,7 @@ function mulberry32(seed) {
     };
 }
 
-export function buildTerrain(scene, level = LEVEL, depth = 0) {
+export function buildTerrain(scene, level, depth = 0) {
     const g = scene.make.graphics({ add: false });
     const rng = mulberry32(99117);
 
@@ -110,6 +110,20 @@ function drawProp(g, prop) {
         g.lineBetween(x + prop.w - 10, y + prop.h * 0.28, x + 10, y + prop.h * 0.78);
         g.lineStyle(8, COLORS.wall, 1);
         g.strokeRoundedRect(x + prop.w * 0.2, y + prop.h * 0.05, prop.w * 0.6, prop.h * 0.4, 6);
+        return;
+    }
+
+    if (prop.type === 'crate') {
+        const x = prop.x - prop.w / 2;
+        const y = prop.y - prop.h / 2;
+        g.fillStyle(COLORS.wall, 1);
+        g.fillRect(x - 4, y - 4, prop.w + 8, prop.h + 8);
+        g.fillStyle(COLORS.crate, 1);
+        g.fillRect(x, y, prop.w, prop.h);
+        // Two planks across the lid so a crate does not read as a hole.
+        g.fillStyle(COLORS.crateDark, 1);
+        g.fillRect(x, y + prop.h * 0.28, prop.w, prop.h * 0.1);
+        g.fillRect(x, y + prop.h * 0.62, prop.w, prop.h * 0.1);
         return;
     }
 

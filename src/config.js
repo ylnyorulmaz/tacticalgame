@@ -18,6 +18,8 @@ export const COLORS = {
     wall: 0x101418,
     sandbag: 0xdda94d,
     sandbagDark: 0xb9822f,
+    crate: 0xb07a3c,
+    crateDark: 0x8a5c2a,
     friendly: 0x29a8e8,
     friendlySel: 0xffffff,
     hostile: 0xf21b1b,
@@ -269,6 +271,31 @@ export const AI = {
     hearingRange: 620,      // gunfire within this radius pulls a hostile to ALERT
     searchTimeout: 6000,    // ms spent poking around a last known position
     alertTurnTime: 500,
+
+    // A garrison, not a set of strangers: first sighting is shouted to anyone
+    // close enough to hear it, and they come looking.
+    shoutRange: 620,
+
+    // Hostiles that are not the closest to the target work around the side
+    // instead of queueing up in the same doorway.
+    flankAfter: 1400,       // ms of contact before trying it
+    flankArc: 1.15,         // rad off the target's line to aim for
+    flankRadius: 320,       // preferred distance from the target
+    flankInterval: 1500,    // ms between re-plans while flanking
+
+    // Badly hurt hostiles break contact rather than trade to the death.
+    retreatHp: 0.3,
+    retreatDistance: 420,
+    retreatTime: 4000,
+};
+
+// Being tucked behind a barricade makes you a harder target, on top of the
+// rounds the barricade physically stops.
+export const COVER = {
+    radius: 52,             // how far behind a unit cover still counts
+    settleTime: 350,        // ms stationary before cover is any use
+    threatRange: 900,       // only enemies this close are worth hiding from
+    spreadPenalty: 0.1,     // rad of extra spread on shots at a fully covered unit
 };
 
 // Incoming fire pins a hostile down: past the threshold it stops shooting until
