@@ -7,7 +7,7 @@
 // erased where the squad has been, and a per-frame "currently visible" texture.
 
 import { WORLD, FOG } from '../config.js';
-import { LEVEL, sightBlockingRects } from '../level.js';
+import { sightBlockingRects } from '../level.js';
 
 function rectToSegments(rect, out) {
     const { x, y, w, h } = rect;
@@ -18,7 +18,7 @@ function rectToSegments(rect, out) {
 }
 
 export class VisionSystem {
-    constructor(level = LEVEL) {
+    constructor(level) {
         this.level = level;
         this.segments = [];
         this.refreshSegments();

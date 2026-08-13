@@ -18,6 +18,8 @@ export const COLORS = {
     wall: 0x101418,
     sandbag: 0xdda94d,
     sandbagDark: 0xb9822f,
+    crate: 0xb07a3c,
+    crateDark: 0x8a5c2a,
     friendly: 0x29a8e8,
     friendlySel: 0xffffff,
     hostile: 0xf21b1b,

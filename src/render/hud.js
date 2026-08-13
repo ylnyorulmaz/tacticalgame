@@ -93,7 +93,7 @@ export class HudScene extends Phaser.Scene {
             const win = state.outcome === 'win';
             this.outcomeText.setText(win ? 'AREA CLEAR' : 'SQUAD ELIMINATED');
             this.outcomeText.setColor(win ? '#7df07d' : '#ff6b6b');
-            this.outcomeHint.setText('Press R to run it again');
+            this.outcomeHint.setText('R to run it again  ·  Esc for map select');
         } else {
             this.outcomeText.setText('');
             this.outcomeHint.setText('');

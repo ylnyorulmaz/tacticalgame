@@ -39,7 +39,10 @@ export class InputController {
             event.preventDefault();
             scene.cycleSelection();
         });
-        keys.on('keydown-ESC', () => scene.selectUnits([]));
+        keys.on('keydown-ESC', () => {
+            if (scene.outcome) scene.returnToMenu();
+            else scene.selectUnits([]);
+        });
         keys.on('keydown-R', () => scene.restartMission());
         keys.on('keydown-M', () => scene.audio.toggleMute());
         const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];

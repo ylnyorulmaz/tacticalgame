@@ -1,6 +1,7 @@
-// Entry point: boot Phaser with the mission scene and the HUD scene on top.
+// Entry point: boot Phaser with the menu, the mission and the HUD on top.
 
 import { VIEW, COLORS } from './config.js';
+import { MenuScene } from './scenes/MenuScene.js';
 import { GameScene } from './scenes/GameScene.js';
 import { HudScene } from './render/hud.js';
 
@@ -18,7 +19,7 @@ const game = new Phaser.Game({
         height: VIEW.height,
     },
     render: { antialias: true, roundPixels: false },
-    scene: [GameScene, HudScene],
+    scene: [MenuScene, GameScene, HudScene],
 });
 
 // Handy for poking at the sim from the console while tuning.

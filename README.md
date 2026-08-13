@@ -1,10 +1,13 @@
 # Tactical CQB — top-down squad prototype
 
-A browser game about clearing a building with a six-man squad: click to select,
-right-click to move, and watch line of sight peel the fog off the map one room at
-a time. Pausable real-time — hit `Space`, plan, unpause, watch it play out.
+A browser game about clearing a building with a six-man squad: pick a map, click
+to select, right-click to move, and watch line of sight peel the fog off the map
+one room at a time. Pausable real-time — hit `Space`, plan, unpause, watch it play
+out.
 
-Built with Phaser 3. No build step, no bundler, no npm install.
+Built with Phaser 3 and Howler. No build step, no bundler, no npm install.
+
+![Map selection](docs/menu.png)
 
 ![Squad breaching the front door](docs/screenshot.png)
 
@@ -23,7 +26,7 @@ python3 -m http.server 8000
 Then open <http://localhost:8000>. It also works as-is on GitHub Pages or any
 static host.
 
-Phaser is loaded from a CDN with a vendored copy in `vendor/phaser.min.js` as an
+Phaser and Howler are loaded from a CDN with vendored copies in `vendor/` as an
 automatic offline fallback, so the game still boots without a network.
 
 ## Controls
@@ -38,11 +41,26 @@ automatic offline fallback, so the game still boots without a network.
 | `Tab` | Cycle through the squad |
 | `1`–`6` | Select a specific unit (hold Shift to add) |
 | `Ctrl`+`A` | Select the whole squad |
-| `Esc` | Clear selection |
+| `Esc` | Clear selection — or, once the mission ends, back to map select |
 | `W A S D` / arrows | Pan the camera |
 | Middle-drag / wheel | Pan / zoom |
 | `M` | Mute / unmute |
-| `R` | Restart the mission |
+| `R` | Restart the current map |
+
+## Maps
+
+The game opens on a map select. Each card's thumbnail is drawn from that map's
+own data, so it always matches what you are about to play.
+
+| Map | Plays like |
+| --- | --- |
+| **Compound** | Three rooms, two doors, one way in. The starter: breach and clear. |
+| **Warehouse** | Six bays, four doors, crates everywhere. Nothing is farther than a room away — Breacher and Machine Gunner territory. |
+| **Outpost** | Open ground, two huts, dug-in positions and patrols. Long sightlines; the Marksman earns its keep. |
+
+`R` restarts the current map, `Esc` on the end-of-mission overlay goes back to the
+map select. Maps live in `src/maps/`; adding one means adding a data module and a
+row in `src/maps/index.js` — nothing else knows how many maps there are.
 
 ## What is in the mission
 
@@ -74,11 +92,11 @@ automatic offline fallback, so the game still boots without a network.
   squad has already cleared stays dimly remembered; ground it has never seen
   stays dark. Hostiles are only drawn while somebody can actually see them, and
   they leave a faint "last known position" ghost when contact is lost.
-- **Doors.** Both interior doors start shut and block sight and movement. Walk a
+- **Doors.** Doors start shut and block sight and movement. Walk a
   unit into one and it breaches it open, flooding the room with light — and
   usually with a firefight.
-- **Hostiles.** Six of them in three flavours: regulars holding arcs and patrol
-  routes, a **Shotgunner** that rushes whoever it hears instead of holding
+- **Hostiles.** Six to eight of them depending on the map, in three flavours:
+  regulars holding arcs and patrol routes, a **Shotgunner** that rushes whoever it hears instead of holding
   ground, and a **Heavy** — slow, tough, long reach — covering the yard. Each
   runs PATROL/IDLE → ALERT → ENGAGE → SEARCH, using the *same* line-of-sight test
   the player's fog uses, so if you cannot see them, they cannot see you. Gunfire
@@ -97,22 +115,35 @@ automatic offline fallback, so the game still boots without a network.
   sparks; grenades trail smoke and burst into a shockwave ring and debris.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
-- **Sound, synthesised on the fly.** Each weapon has its own report, and there are
-  effects for grenades and their detonation, rounds striking walls and bodies, a
-  door going in, a squadmate going down or being revived, and the mission ending.
-  Nothing is loaded from disk: every sound is built from filtered noise and swept
-  oscillators through the Web Audio API, so there are no audio files to ship. The
-  camera is the ear — sounds fall off with distance from the middle of the view
-  and pan to the side they happened on. `M` mutes.
+- **Sound.** Every weapon has its own report, and there are effects for grenades
+  and their detonation, rounds striking walls and bodies, a door going in, a
+  squadmate going down or being revived, and the mission ending. Playback is
+  Howler over a single sprite; the bank itself is rendered ahead of time by
+  `tools/build-audio.mjs`, which layers noise and oscillators through filters,
+  saturation and a small reverb, and bakes **three takes of each weapon** so a
+  burst never sounds like one sample on repeat. The camera is the ear — sounds
+  fall off with distance from the middle of the view and pan to the side they
+  happened on. `M` mutes.
+
+  Regenerate the bank after editing the recipes:
+
+  ```bash
+  node tools/build-audio.mjs   # writes assets/audio/sfx.wav + src/audio-sprite.js
+  ```
 
 ## Layout
 
 ```
-index.html              page shell, Phaser CDN tag + offline fallback
-vendor/phaser.min.js    vendored engine for offline play
+index.html              page shell, CDN tags + offline fallbacks
+vendor/                 vendored Phaser and Howler for offline play
+assets/audio/sfx.wav    generated sound bank (see tools/build-audio.mjs)
+tools/build-audio.mjs   offline sound renderer
 src/main.js             Phaser boot
 src/config.js           tuning: stats, weapons, colours, fog, AI timings
-src/level.js            the map: walls, doors, props, trees, spawns, patrols
+src/level.js            shared geometry helpers (what blocks movement/sight)
+src/maps/               compound, warehouse, outpost + the map registry
+src/audio-sprite.js     generated sprite offsets
+src/scenes/MenuScene.js map select
 src/scenes/GameScene.js per-frame orchestration, orders, pause, outcome
 src/systems/nav.js      walk grid, A*, path smoothing
 src/systems/vision.js   line of sight, visibility polygons, fog layers
@@ -126,6 +157,7 @@ src/systems/effects.js  particles: brass, smoke, sparks, debris, shockwaves
 src/render/terrain.js   baked scenery: grass, grid, trees, building, props
 src/render/weapons.js   weapon part shapes, muzzle flashes, recoil placement
 src/render/entities.js  units, corpses, doors, tracers, order lines
+src/render/preview.js   map thumbnails drawn from map data
 src/render/hud.js       unit card, mission status, pause and outcome overlays
 ```
 

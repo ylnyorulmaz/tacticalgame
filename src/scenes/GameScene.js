@@ -3,14 +3,14 @@
 // always run, which is what makes the pausable real-time loop work.
 
 import { WORLD } from '../config.js';
-import { LEVEL } from '../level.js';
+import { buildMap, DEFAULT_MAP } from '../maps/index.js';
 import { NavGrid, CELL } from '../systems/nav.js';
 import { VisionSystem, FogRenderer } from '../systems/vision.js';
 import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
-import { AudioEngine } from '../systems/audio.js';
+import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
 import { buildTerrain } from '../render/terrain.js';
@@ -21,32 +21,32 @@ export class GameScene extends Phaser.Scene {
         super('game');
     }
 
-    create() {
-        // LEVEL is a module singleton; doors carry state, so reset them on restart.
-        for (const door of LEVEL.doors) door.open = false;
+    init(data) {
+        // Which map to run; kept so `R` restarts this one rather than the first.
+        this.mapId = (data && data.mapId) || this.mapId || DEFAULT_MAP;
+    }
 
+    create() {
         this.paused = false;
         this.outcome = null;
         this.outcomeAnnounced = false;
-        this.level = LEVEL;
+        // A fresh level every mission: doors carry open/shut state.
+        this.level = buildMap(this.mapId);
+        const level = this.level;
 
-        buildTerrain(this, LEVEL, 0);
-        this.vision = new VisionSystem(LEVEL);
-        this.nav = new NavGrid(LEVEL);
-        this.combat = new CombatSystem(LEVEL, this.vision);
+        buildTerrain(this, level, 0);
+        this.vision = new VisionSystem(level);
+        this.nav = new NavGrid(level);
+        this.combat = new CombatSystem(level, this.vision);
         this.fog = new FogRenderer(this, 20);
         this.entities = new EntityRenderer(this);
-        this.entities.drawDoors(LEVEL);
-        // Survives restarts: the scene is rebuilt, but the AudioContext and the
-        // player's mute choice should not be.
-        const wasMuted = this.audio ? this.audio.muted : false;
-        if (this.audio) this.audio.dispose();
-        this.audio = new AudioEngine(this);
-        this.audio.setMuted(wasMuted);
+        this.entities.drawDoors(level);
+        // Shared with the menu scene: one sound bank, one mute state.
+        this.audio = getAudio(this);
         this.effects = new EffectSystem();
 
-        this.squad = LEVEL.squad.map((spec) => new Unit(spec));
-        this.hostiles = LEVEL.hostiles.map((spec) => {
+        this.squad = level.squad.map((spec) => new Unit(spec));
+        this.hostiles = level.hostiles.map((spec) => {
             const unit = new Unit({ cls: spec.cls || 'hostile', x: spec.x, y: spec.y, facing: spec.facing });
             unit.route = spec.route;
             unit.ai.state = spec.route ? 'patrol' : 'idle';
@@ -62,8 +62,8 @@ export class GameScene extends Phaser.Scene {
             noises: this.combat.noises,
             // A shut door is pathable (you can plan through it) but not walkable
             // until it is actually breached open.
-            blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(LEVEL.doors, x, y, 2),
-            closedDoorAt: (x, y) => doorAtPoint(LEVEL.doors, x, y, 10),
+            blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2),
+            closedDoorAt: (x, y) => doorAtPoint(this.level.doors, x, y, 10),
             openDoor: (door) => this.openDoor(door),
             onBreachStart: (unit) => this.audio.play('breachStart', unit.x, unit.y),
             repath: (unit, point) => {
@@ -75,7 +75,7 @@ export class GameScene extends Phaser.Scene {
         const cam = this.cameras.main;
         cam.setBounds(0, 0, WORLD.width, WORLD.height);
         cam.setZoom(0.78);
-        cam.centerOn(LEVEL.cameraStart.x, LEVEL.cameraStart.y);
+        cam.centerOn(level.cameraStart.x, level.cameraStart.y);
 
         this.inputCtl = new InputController(this);
         this.selectUnits([this.squad[0]]);
@@ -91,7 +91,7 @@ export class GameScene extends Phaser.Scene {
         this.nav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
-        this.entities.drawDoors(LEVEL);
+        this.entities.drawDoors(this.level);
     }
 
     togglePause() {
@@ -101,7 +101,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     restartMission() {
-        this.scene.restart();
+        this.scene.restart({ mapId: this.mapId });
+    }
+
+    // Back to map selection: the HUD belongs to the mission, so it goes too.
+    returnToMenu() {
+        this.scene.stop('hud');
+        this.scene.start('menu');
     }
 
     selectUnits(units) {

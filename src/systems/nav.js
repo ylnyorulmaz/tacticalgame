@@ -4,7 +4,7 @@
 // is able to path "through" a shut door and then breach it on arrival.
 
 import { WORLD, UNIT_RADIUS } from '../config.js';
-import { LEVEL, staticSolidRects, sandbagArcs, pointInSandbag } from '../level.js';
+import { staticSolidRects, sandbagArcs, pointInSandbag } from '../level.js';
 
 export const CELL = 20;
 export const COLS = Math.ceil(WORLD.width / CELL);
@@ -18,7 +18,7 @@ const DOOR_COST = 6;
 const SQRT2 = Math.SQRT2;
 
 export class NavGrid {
-    constructor(level = LEVEL) {
+    constructor(level) {
         this.level = level;
         this.cells = new Uint8Array(COLS * ROWS);
         this.g = new Float32Array(COLS * ROWS);
