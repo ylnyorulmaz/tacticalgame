@@ -48,7 +48,7 @@ export class HudScene extends Phaser.Scene {
         this.outcomeHint = label(VIEW.width / 2, VIEW.height / 2 + 20, 20, 0.5);
         this.outcomeHint.setOrigin(0.5, 0.5);
 
-        this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab / 1-6 select · WASD/wheel camera · R restart');
+        this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
 
         this.scale.on('resize', this.layout, this);
         this.layout();
@@ -78,8 +78,9 @@ export class HudScene extends Phaser.Scene {
         this.gfx.clear();
 
         const casualties = state.squadDown > 0 ? `    ${state.squadDown} DOWN` : '';
+        const audio = state.muted ? '    🔇 MUTED' : '';
         this.statusText.setText(
-            `HOSTILES ${state.hostilesDown}/${state.hostilesTotal} DOWN    SQUAD ${state.squadAlive}/${state.squadTotal}${casualties}`,
+            `HOSTILES ${state.hostilesDown}/${state.hostilesTotal} DOWN    SQUAD ${state.squadAlive}/${state.squadTotal}${casualties}${audio}`,
         );
         this.pauseText.setText(state.paused ? '❚❚  PAUSED — issue orders, then press SPACE' : '');
 

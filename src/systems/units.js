@@ -195,6 +195,7 @@ export class Unit {
                     timer: this.stats.breachTime,
                     angle: Math.atan2(door.y + door.h / 2 - this.y, door.x + door.w / 2 - this.x),
                 };
+                if (ctx.onBreachStart) ctx.onBreachStart(this, door);
                 return;
             }
         }
