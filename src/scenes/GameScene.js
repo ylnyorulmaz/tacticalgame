@@ -11,6 +11,7 @@ import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
 import { AudioEngine } from '../systems/audio.js';
+import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
 import { buildTerrain } from '../render/terrain.js';
 import { EntityRenderer } from '../render/entities.js';
@@ -42,6 +43,7 @@ export class GameScene extends Phaser.Scene {
         if (this.audio) this.audio.dispose();
         this.audio = new AudioEngine(this);
         this.audio.setMuted(wasMuted);
+        this.effects = new EffectSystem();
 
         this.squad = LEVEL.squad.map((spec) => new Unit(spec));
         this.hostiles = LEVEL.hostiles.map((spec) => {
@@ -161,13 +163,18 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             this.combat.update(dt, this.units, time);
             updateSupport(this.units, dt, this.combat.events);
+            this.effects.update(dt, this.combat.projectiles);
             this.checkOutcome();
         }
 
-        // Drain the frame's sound events even while paused, so the last shots
-        // before a pause are not swallowed.
+        // One event stream, two consumers: the audio engine reads `type`, the
+        // particle system reads `kind` and the extras that come with it. Drained
+        // even while paused, so the last shots before a pause are not swallowed.
         if (this.combat.events.length > 0) {
-            this.audio.playEvents(this.combat.events);
+            for (const event of this.combat.events) {
+                this.audio.play(event.type, event.x, event.y);
+                this.effects.handle(event);
+            }
             this.combat.events.length = 0;
         }
 
@@ -185,6 +192,7 @@ export class GameScene extends Phaser.Scene {
             units: this.units,
             projectiles: this.combat.projectiles,
             explosions: this.combat.explosions,
+            effects: this.effects,
             time,
             vision: this.vision,
             friendlies: this.squad,

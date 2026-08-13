@@ -39,6 +39,7 @@ export class Unit {
         this.burstGapTimer = 0;
         this.target = null;
         this.muzzleFlash = 0;
+        this.recoil = 0;
         this.grenadesLeft = this.stats.grenade ? this.stats.grenade.count : 0;
         this.grenadeTimer = 0;
 
@@ -142,6 +143,7 @@ export class Unit {
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
+        this.recoil = Math.max(0, this.recoil - dt / 90);   // gun slides back home
         this.suppression = Math.max(0, this.suppression - (SUPPRESSION.decayPerSecond * dt) / 1000);
         // Hysteresis, so a unit hovering at the threshold does not flicker
         // between pinned and firing every frame.

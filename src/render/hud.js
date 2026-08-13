@@ -3,7 +3,8 @@
 // banner and the end-of-mission overlay.
 
 import { VIEW, COLORS, UNIT_CLASSES } from '../config.js';
-import { fillRotatedRect, drawCrossIcon, GUN } from './entities.js';
+import { drawCrossIcon } from './entities.js';
+import { GUN, drawWeapon } from './weapons.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
 const BLOCKS = 10;
@@ -119,28 +120,20 @@ export class HudScene extends Phaser.Scene {
 
         // Unit glyph: the same circle-and-weapon the unit is drawn with on the
         // map, read from the shared silhouette table so the two cannot drift.
+        // The card shows the unit exactly as it appears on the map, weapon parts
+        // and all, so the silhouette is learnable from the card.
         const glyph = GUN[cls.id] || GUN.operator;
-        const glyphX = barsLeft - 78;
+        const glyphX = barsLeft - 82;
         const glyphY = h - 168;
         const angle = -0.42;
         const r = 17;
+        const scale = 1.15;
         const gunX = glyphX + Math.cos(angle) * r * 0.55 - Math.sin(angle) * r * 0.3;
         const gunY = glyphY + Math.sin(angle) * r * 0.55 + Math.cos(angle) * r * 0.3;
 
         this.gfx.fillStyle(COLORS.friendly, 1);
         this.gfx.fillCircle(glyphX, glyphY, r);
-        this.gfx.fillStyle(COLORS.gun, 1);
-        fillRotatedRect(this.gfx, gunX, gunY, glyph.length * 1.1, glyph.width * 1.1, angle);
-        if (glyph.bipod) {
-            fillRotatedRect(
-                this.gfx,
-                gunX + Math.cos(angle) * glyph.length * 0.37,
-                gunY + Math.sin(angle) * glyph.length * 0.37,
-                4,
-                22,
-                angle,
-            );
-        }
+        drawWeapon(this.gfx, gunX, gunY, angle, glyph, scale);
         if (glyph.icon === 'cross') drawCrossIcon(this.gfx, { x: glyphX, y: glyphY }, 1.15);
 
         // Grenade charges, so you can see when the grenadier has run dry.
