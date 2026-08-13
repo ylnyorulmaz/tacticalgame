@@ -2,7 +2,8 @@
 // being told to; hostiles only shoot once their brain has flipped to ENGAGE.
 
 import { rectContains, solidRects, sandbagArcs, pointInSandbag } from '../level.js';
-import { SUPPRESSION, COVER } from '../config.js';
+import { SUPPRESSION, COVER, ORDERS } from '../config.js';
+import { isSprinting } from './orders.js';
 
 const AIM_TOLERANCE = 0.2;      // rad of error allowed before the trigger is pulled
 const SUBSTEP = 8;              // px per collision substep, keeps tracers from tunnelling
@@ -34,6 +35,19 @@ export class CombatSystem {
 
         for (const unit of units) {
             if (!unit.alive) continue;
+
+            // An aimed throw outranks everything: the player asked for it by
+            // hand and knows better than the acquisition rules what it is for.
+            if (unit.order.throwAt) {
+                this.aimedThrow(unit, now);
+                continue;
+            }
+            // Rounds on a patch of ground need no target, only reach.
+            if (unit.order.suppressAt) {
+                this.suppressGround(unit, now);
+                continue;
+            }
+
             this.acquire(unit, unit.isFriendly ? hostiles : friendlies);
             if (!unit.target) continue;
 
@@ -41,7 +55,7 @@ export class CombatSystem {
             if (!this.mayFire(unit)) continue;
             // A grenade is worth more than a burst when the target is far
             // enough away and the squad is clear of the blast.
-            if (this.mayThrow(unit, friendlies)) this.throwGrenade(unit, now);
+            if (this.mayThrow(unit, friendlies)) this.throwGrenade(unit, now, unit.target);
             else this.fire(unit, now);
         }
 
@@ -74,17 +88,67 @@ export class CombatSystem {
         return this.vision.hasLineOfSight(unit.x, unit.y, target.x, target.y);
     }
 
-    mayFire(unit) {
+    // Everything that stops a trigger being pulled regardless of what is being
+    // shot at. Both aimed fire and ordered suppressive fire go through this.
+    canShoot(unit) {
         if (unit.breaching) return false;
         if (unit.pinned) return false;                  // head down under fire
         if (unit.fireTimer > 0 || unit.burstGapTimer > 0) return false;
-        // Hostiles wait for their reaction time; the AI raises this flag.
-        if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
+        if (unit.order.stance === 'hold') return false; // told to hold fire
+        if (isSprinting(unit)) return false;            // weapon is down while running
         // The marksman has to plant before it can take the shot.
         if (unit.stats.steadyTime && unit.stationaryFor < unit.stats.steadyTime) return false;
+        return true;
+    }
+
+    mayFire(unit) {
+        if (!this.canShoot(unit)) return false;
+        // Hostiles wait for their reaction time; the AI raises this flag.
+        if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
         let error = unit.aimAngle - unit.facing;
         error = Math.atan2(Math.sin(error), Math.cos(error));
         return Math.abs(error) <= AIM_TOLERANCE;
+    }
+
+    // Suppressive fire: rounds onto a patch of ground whether or not anybody is
+    // standing there. Wider cone than aimed fire, and every round carries real
+    // pressure even from weapons that normally suppress nobody — that pressure
+    // is the entire reason the order exists.
+    suppressGround(unit, now) {
+        const point = unit.order.suppressAt;
+        unit.target = null;
+        unit.aimAngle = Math.atan2(point.y - unit.y, point.x - unit.x);
+
+        if (Math.hypot(point.x - unit.x, point.y - unit.y) > unit.stats.weapon.range) return;
+        if (!this.canShoot(unit)) return;
+        let error = unit.aimAngle - unit.facing;
+        error = Math.atan2(Math.sin(error), Math.cos(error));
+        if (Math.abs(error) > AIM_TOLERANCE) return;
+
+        this.fire(unit, now, {
+            extraSpread: ORDERS.suppressSpread,
+            suppression: Math.max(unit.stats.suppressionPerHit || 0, ORDERS.suppressSuppression),
+        });
+    }
+
+    // A throw the player placed by hand. It waits for the arm to be free rather
+    // than being dropped, so ordering one during a reload still works.
+    aimedThrow(unit, now) {
+        const order = unit.order.throwAt;
+        unit.target = null;
+        unit.aimAngle = Math.atan2(order.y - unit.y, order.x - unit.x);
+
+        if (unit.breaching || unit.grenadeTimer > 0 || unit.fireTimer > 0) return;
+        if (unit.grenadesLeft <= 0 || !unit.stats.grenade) {
+            unit.order.throwAt = null;
+            return;
+        }
+        let error = unit.aimAngle - unit.facing;
+        error = Math.atan2(Math.sin(error), Math.cos(error));
+        if (Math.abs(error) > AIM_TOLERANCE) return;
+
+        this.throwGrenade(unit, now, order);
+        unit.order.throwAt = null;
     }
 
     // Grenades are held back at knife range, when the charge is on cooldown, or
@@ -104,9 +168,10 @@ export class CombatSystem {
         return true;
     }
 
-    throwGrenade(unit, now) {
+    // `target` is any {x, y}: the unit's current contact for an automatic throw,
+    // or the spot the player picked for an aimed one.
+    throwGrenade(unit, now, target) {
         const grenade = unit.stats.grenade;
-        const target = unit.target;
         const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
         const muzzleX = unit.x + Math.cos(angle) * (unit.radius + 10);
         const muzzleY = unit.y + Math.sin(angle) * (unit.radius + 10);
@@ -133,6 +198,7 @@ export class CombatSystem {
             y: muzzleY,
             angle,
             cls: unit.cls,
+            unit: unit.id,
         });
         unit.recoil = 1;
         unit.muzzleFlash = 60;
@@ -142,7 +208,7 @@ export class CombatSystem {
         this.noises.push({ x: unit.x, y: unit.y, team: unit.team, time: now });
     }
 
-    fire(unit, now) {
+    fire(unit, now, opts = {}) {
         const weapon = unit.stats.weapon;
         const muzzleX = unit.x + Math.cos(unit.facing) * (unit.radius + 12);
         const muzzleY = unit.y + Math.sin(unit.facing) * (unit.radius + 12);
@@ -150,7 +216,8 @@ export class CombatSystem {
         // A target tucked behind a barricade is harder to hit, on top of the
         // rounds the barricade itself eats.
         const covered = unit.target ? unit.target.inCover || 0 : 0;
-        const spread = weapon.spread + covered * COVER.spreadPenalty;
+        const spread = weapon.spread + covered * COVER.spreadPenalty + (opts.extraSpread || 0);
+        const suppression = opts.suppression ?? (unit.stats.suppressionPerHit || 0);
 
         for (let i = 0; i < pellets; i++) {
             const angle = unit.facing + (Math.random() - 0.5) * 2 * spread;
@@ -162,7 +229,7 @@ export class CombatSystem {
                 vx: Math.cos(angle) * weapon.bulletSpeed,
                 vy: Math.sin(angle) * weapon.bulletSpeed,
                 damage: weapon.damage,
-                suppression: unit.stats.suppressionPerHit || 0,
+                suppression,
                 team: unit.team,
                 owner: unit,
                 travelled: 0,
@@ -177,6 +244,7 @@ export class CombatSystem {
             y: muzzleY,
             angle: unit.facing,
             cls: unit.cls,
+            unit: unit.id,
         });
         unit.fireTimer = weapon.cooldown;
         unit.muzzleFlash = 95;

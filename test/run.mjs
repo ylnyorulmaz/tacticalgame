@@ -5,9 +5,10 @@
 import { suite } from './harness.mjs';
 import * as maps from './maps.test.mjs';
 import * as audio from './audio.test.mjs';
+import * as tactics from './tactics.test.mjs';
 import * as smoke from './smoke.test.mjs';
 
-const suites = [maps, audio, smoke];
+const suites = [maps, audio, tactics, smoke];
 
 // Normally a devDependency. PLAYWRIGHT_PATH lets a machine with a global or
 // otherwise unusual install point the runner at it instead.

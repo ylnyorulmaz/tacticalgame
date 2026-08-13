@@ -88,6 +88,7 @@ export class EntityRenderer {
             if (unit.reviving) drawReviveLink(overlay, unit, unit.reviving);
             if (unit.pinned) drawPinned(overlay, unit);
             if (unit.inCover > 0.35) drawCoverMark(overlay, unit);
+            if (unit.isFriendly && unit.order.stance === 'hold') drawHoldMark(overlay, unit);
             if (unit.lastHitAt && state.time - unit.lastHitAt < 700) {
                 drawHitDirection(overlay, unit, (state.time - unit.lastHitAt) / 700);
             }
@@ -107,10 +108,71 @@ export class EntityRenderer {
             drawExplosion(fx, blast);
         }
 
+        // Standing orders for the selection, so the player can read back what
+        // was asked for without waiting to see whether it happens.
         for (const unit of selected) {
-            if (!unit.alive || !unit.path) continue;
-            drawOrder(overlay, unit);
+            if (!unit.alive) continue;
+            if (unit.path) drawOrder(overlay, unit);
+            if (unit.order.suppressAt) drawSuppressOrder(overlay, unit);
+            if (unit.order.stackAt) drawStackOrder(overlay, unit);
+            if (unit.order.facing !== null) {
+                const at = unit.path && unit.orderPoint ? unit.orderPoint : unit;
+                drawFacingCone(overlay, at, unit.order.facing);
+            }
         }
+    }
+}
+
+// The arc a unit will be watching when it gets where it is going.
+function drawFacingCone(g, at, angle) {
+    const reach = 62;
+    const spread = 0.45;
+    g.lineStyle(2, COLORS.friendlySel, 0.55);
+    for (const side of [-1, 1]) {
+        g.lineBetween(
+            at.x, at.y,
+            at.x + Math.cos(angle + side * spread) * reach,
+            at.y + Math.sin(angle + side * spread) * reach,
+        );
+    }
+    g.beginPath();
+    g.arc(at.x, at.y, reach, angle - spread, angle + spread);
+    g.strokePath();
+}
+
+// A beaten zone: where the rounds are going and roughly how wide the cone is.
+function drawSuppressOrder(g, unit) {
+    const point = unit.order.suppressAt;
+    g.lineStyle(2, 0xffd24a, 0.5);
+    g.lineBetween(unit.x, unit.y, point.x, point.y);
+    g.lineStyle(2, 0xffd24a, 0.9);
+    g.strokeCircle(point.x, point.y, 26);
+    g.lineBetween(point.x - 34, point.y, point.x - 16, point.y);
+    g.lineBetween(point.x + 16, point.y, point.x + 34, point.y);
+    g.lineBetween(point.x, point.y - 34, point.x, point.y - 16);
+    g.lineBetween(point.x, point.y + 16, point.x, point.y + 34);
+}
+
+// Waiting beside a door for the word.
+function drawStackOrder(g, unit) {
+    const door = unit.order.stackAt;
+    const cx = door.x + door.w / 2;
+    const cy = door.y + door.h / 2;
+    g.lineStyle(2, 0x7fd8ff, 0.75);
+    g.lineBetween(unit.x, unit.y, cx, cy);
+    g.strokeCircle(cx, cy, 16);
+    g.strokeCircle(unit.x, unit.y, unit.radius + 7);
+}
+
+// Weapons tight: an amber ring so a squad on hold is obvious at a glance.
+function drawHoldMark(g, unit) {
+    g.lineStyle(2, 0xffd24a, 0.85);
+    const gap = 0.5;
+    for (let i = 0; i < 4; i++) {
+        const from = i * (Math.PI / 2) + gap / 2;
+        g.beginPath();
+        g.arc(unit.x, unit.y, unit.radius + 6, from, from + Math.PI / 2 - gap);
+        g.strokePath();
     }
 }
 

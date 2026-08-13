@@ -1,6 +1,8 @@
 // Mouse and keyboard: selection (click, box, hotkeys), move orders with a small
-// formation spread, the pause toggle, and camera pan/zoom. Everything here keeps
-// working while the game is paused — that is the whole point of the pause.
+// formation spread, the tactical order verbs, the pause toggle, and camera
+// pan/zoom. Everything here keeps working while the game is paused — that is the
+// whole point of the pause, and now that orders exist it is a planning phase
+// rather than just a freeze frame.
 
 import { COLORS } from '../config.js';
 
@@ -8,6 +10,14 @@ const CAMERA_PAN_SPEED = 850;
 const ZOOM_MIN = 0.45;
 const ZOOM_MAX = 1.6;
 const CLICK_SLOP = 7;
+const FACE_SLOP = 16;       // drag this far off a move order to set an arrival facing
+
+// Verbs that are armed by a key and then resolved by clicking a point.
+export const AIMED_VERBS = {
+    suppress: { key: 'Q', label: 'SUPPRESS', color: 0xffd24a },
+    frag: { key: 'G', label: 'FRAG', color: 0xff8a3a },
+    stack: { key: 'E', label: 'STACK', color: 0x7fd8ff },
+};
 
 export class InputController {
     constructor(scene) {
@@ -17,6 +27,8 @@ export class InputController {
         this.dragStart = null;
         this.dragging = false;
         this.panFrom = null;
+        this.faceFrom = null;   // right-drag in progress: move point plus facing
+        this.pending = null;    // armed aimed verb waiting for a click
 
         scene.input.mouse.disableContextMenu();
 
@@ -41,8 +53,18 @@ export class InputController {
         });
         keys.on('keydown-ESC', () => {
             if (scene.outcome) scene.returnToMenu();
+            else if (this.pending) this.arm(null);
             else scene.selectUnits([]);
         });
+
+        // Order verbs. The three aimed ones arm a click; the rest apply to the
+        // current selection immediately.
+        for (const [verb, spec] of Object.entries(AIMED_VERBS)) {
+            keys.on(`keydown-${spec.key}`, () => this.arm(this.pending === verb ? null : verb));
+        }
+        keys.on('keydown-F', () => scene.orderHold());
+        keys.on('keydown-Z', () => scene.orderPace());
+        keys.on('keydown-ENTER', () => scene.orderGo());
         keys.on('keydown-R', () => scene.restartMission());
         keys.on('keydown-M', () => scene.audio.toggleMute());
         const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];
@@ -84,6 +106,14 @@ export class InputController {
         return !!hud && hud.scene.isActive() && hud.hitsUi && hud.hitsUi(pointer.x, pointer.y);
     }
 
+    // Arm or disarm an aimed verb. The scene publishes it so the HUD can show
+    // which one is waiting and the cursor can change.
+    arm(verb) {
+        this.pending = verb && this.scene.selected.length > 0 ? verb : null;
+        this.scene.pendingOrder = this.pending;
+        this.scene.input.setDefaultCursor(this.pending ? 'crosshair' : 'default');
+    }
+
     onPointerDown(pointer) {
         if (this.overUi(pointer)) return;
         if (pointer.middleButtonDown()) {
@@ -91,9 +121,11 @@ export class InputController {
             return;
         }
         if (pointer.rightButtonDown()) {
-            this.scene.issueMoveOrder(pointer.worldX, pointer.worldY, pointer.event.shiftKey);
+            // Held, not issued: dragging out from here sets the arrival facing.
+            this.faceFrom = { x: pointer.worldX, y: pointer.worldY, queue: !!pointer.event.shiftKey };
             return;
         }
+        if (this.pending) return;   // the click belongs to the armed verb
         this.dragStart = { x: pointer.worldX, y: pointer.worldY };
         this.dragging = false;
     }
@@ -104,6 +136,10 @@ export class InputController {
                 this.panFrom.scrollX + (this.panFrom.x - pointer.x) / this.cam.zoom,
                 this.panFrom.scrollY + (this.panFrom.y - pointer.y) / this.cam.zoom,
             );
+            return;
+        }
+        if (this.faceFrom && pointer.rightButtonDown()) {
+            this.drawFacing(this.faceFrom, { x: pointer.worldX, y: pointer.worldY });
             return;
         }
         if (!this.dragStart || !pointer.leftButtonDown()) return;
@@ -120,6 +156,25 @@ export class InputController {
         }
         if (pointer.button === 1) {
             this.panFrom = null;
+            return;
+        }
+        // Right button released: move there, facing whichever way it was dragged.
+        if (pointer.button === 2) {
+            const from = this.faceFrom;
+            this.faceFrom = null;
+            this.boxGfx.clear();
+            if (!from) return;
+            const dx = pointer.worldX - from.x;
+            const dy = pointer.worldY - from.y;
+            const facing = Math.hypot(dx, dy) > FACE_SLOP ? Math.atan2(dy, dx) : null;
+            this.scene.issueMoveOrder(from.x, from.y, from.queue, facing);
+            return;
+        }
+        // A click that belongs to an armed verb never selects or box-selects.
+        if (this.pending) {
+            const verb = this.pending;
+            this.arm(null);
+            this.scene.resolveAimedOrder(verb, pointer.worldX, pointer.worldY);
             return;
         }
         if (pointer.button !== 0 || !this.dragStart) return;
@@ -145,6 +200,33 @@ export class InputController {
             (u) => u.alive && u.x >= minX && u.x <= maxX && u.y >= minY && u.y <= maxY,
         );
         this.select(inBox);
+    }
+
+    // The arrow you drag out of a move order: where they go, and which way they
+    // will be looking when they get there.
+    drawFacing(from, to) {
+        const g = this.boxGfx;
+        g.clear();
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        if (Math.hypot(dx, dy) <= FACE_SLOP) return;
+        const angle = Math.atan2(dy, dx);
+        const reach = 74;
+        const spread = 0.42;
+
+        g.lineStyle(2, COLORS.friendlySel, 0.85);
+        g.strokeCircle(from.x, from.y, 12);
+        g.lineBetween(
+            from.x, from.y,
+            from.x + Math.cos(angle) * reach, from.y + Math.sin(angle) * reach,
+        );
+        for (const side of [-1, 1]) {
+            g.lineBetween(
+                from.x, from.y,
+                from.x + Math.cos(angle + side * spread) * reach * 0.8,
+                from.y + Math.sin(angle + side * spread) * reach * 0.8,
+            );
+        }
     }
 
     drawBox(a, b) {

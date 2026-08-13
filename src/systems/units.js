@@ -3,6 +3,7 @@
 
 import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED } from '../config.js';
 import { rectContains } from '../level.js';
+import { makeOrder, paceScale, staysSet } from './orders.js';
 
 let nextId = 1;
 
@@ -32,6 +33,9 @@ export class Unit {
         this.pathIndex = 0;
         this.orderPoint = null;
         this.breaching = null;
+        // What the player has told this unit to do beyond walking. Hostiles
+        // carry the record too and simply never have it written to.
+        this.order = makeOrder();
 
         // Weapon state.
         this.fireTimer = 0;
@@ -160,9 +164,10 @@ export class Unit {
         this.step(dt, ctx);
 
         // Breaching or held in place still counts as being set, which is what
-        // the marksman's steady requirement reads.
+        // the marksman's steady requirement reads — and so does creeping, which
+        // is the whole reason to order a careful pace.
         const travelled = Math.hypot(this.x - startX, this.y - startY);
-        this.stationaryFor = travelled > 0.35 ? 0 : this.stationaryFor + dt;
+        this.stationaryFor = travelled > 0.35 && !staysSet(this) ? 0 : this.stationaryFor + dt;
     }
 
     step(dt, ctx) {
@@ -179,10 +184,18 @@ export class Unit {
         }
 
         this.moveAlongPath(dt, ctx);
+        this.facing = turnToward(this.facing, this.desiredFacing(), (this.stats.turnSpeed * dt) / 1000);
+    }
 
-        // Aim at whatever we are shooting at, otherwise look where we are going.
-        const desired = this.target && this.target.alive ? this.aimAngle : this.travelAngle ?? this.facing;
-        this.facing = turnToward(this.facing, desired, (this.stats.turnSpeed * dt) / 1000);
+    // What this unit wants to be looking at, in priority order: its target, the
+    // ground it was told to suppress, the arrival facing it was given, and
+    // failing all of that, wherever it is walking.
+    desiredFacing() {
+        if (this.target && this.target.alive) return this.aimAngle;
+        const order = this.order;
+        if (order.suppressAt) return Math.atan2(order.suppressAt.y - this.y, order.suppressAt.x - this.x);
+        if (!this.path && order.facing !== null) return order.facing;
+        return this.travelAngle ?? this.facing;
     }
 
     moveAlongPath(dt, ctx) {
@@ -193,7 +206,8 @@ export class Unit {
         }
 
         const waypoint = this.path[this.pathIndex];
-        const door = ctx.closedDoorAt(waypoint.x, waypoint.y);
+        // A unit told to stack waits beside the door instead of forcing it.
+        const door = this.order.stackAt ? null : ctx.closedDoorAt(waypoint.x, waypoint.y);
         if (door) {
             const gap = Math.hypot(door.x + door.w / 2 - this.x, door.y + door.h / 2 - this.y);
             if (gap < 52) {
@@ -220,7 +234,7 @@ export class Unit {
         }
 
         this.travelAngle = Math.atan2(dy, dx);
-        const step = (this.stats.speed * dt) / 1000;
+        const step = (this.stats.speed * paceScale(this) * dt) / 1000;
         const nx = this.x + (dx / dist) * step;
         const ny = this.y + (dy / dist) * step;
 

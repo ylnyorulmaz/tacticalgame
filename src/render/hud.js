@@ -7,6 +7,7 @@ import { drawCrossIcon } from './entities.js';
 import { GUN, drawWeapon } from './weapons.js';
 import { Roster } from './roster.js';
 import { Minimap } from './minimap.js';
+import { Palette } from './palette.js';
 
 const BAR_ORDER = ['Speed', 'Firepower', 'Survivability', 'Range'];
 const BLOCKS = 10;
@@ -25,11 +26,17 @@ export class HudScene extends Phaser.Scene {
         this.roster = new Roster(this);
         this.minimapLevel = this.game_.level;
         this.minimap = new Minimap(this, this.minimapLevel);
+        this.palette = new Palette(this);
         this.feedLabels = [];
 
         // Clicks that land on HUD furniture must not also order the squad into a
         // wall; GameScene's input controller asks this before acting.
         this.input.on('pointerdown', (pointer) => {
+            const chip = this.palette.chipAt(pointer.x, pointer.y);
+            if (chip) {
+                this.runVerb(chip.verb.id);
+                return;
+            }
             const unit = this.roster.unitAt(pointer.x, pointer.y);
             if (unit && unit.alive) {
                 this.game_.selectUnits([unit]);
@@ -70,7 +77,7 @@ export class HudScene extends Phaser.Scene {
         this.outcomeHint = label(VIEW.width / 2, VIEW.height / 2 + 20, 20, 0.5);
         this.outcomeHint.setOrigin(0.5, 0.5);
 
-        this.hintText.setText('LMB select · drag box · RMB move (Shift queues) · SPACE pause · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
+        this.hintText.setText('LMB select · RMB move, drag to set facing (Shift queues) · SPACE pause and plan · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
 
         // Event feed lines, newest at the top.
         for (let i = 0; i < 5; i++) {
@@ -101,13 +108,24 @@ export class HudScene extends Phaser.Scene {
         this.outcomeHint.setPosition(w / 2, h / 2 + 20);
 
         if (this.minimap) this.minimap.layout();
+        if (this.palette) this.palette.layout();
         this.feedLabels.forEach((label, i) => label.setPosition(w - 20, 210 + i * 19));
         if (this.roster && this.game_.squad) this.roster.layout(this.game_.squad);
     }
 
     // Screen regions the mission must not receive clicks through.
     hitsUi(x, y) {
-        return this.roster.contains(x, y) || this.minimap.contains(x, y);
+        return this.roster.contains(x, y) || this.minimap.contains(x, y) || this.palette.contains(x, y);
+    }
+
+    // A palette chip does exactly what its hotkey does: the aimed verbs arm the
+    // next click, the rest fire immediately.
+    runVerb(id) {
+        const game = this.game_;
+        if (id === 'hold') return game.orderHold();
+        if (id === 'pace') return game.orderPace();
+        if (id === 'go') return game.orderGo();
+        return game.inputCtl.arm(game.pendingOrder === id ? null : id);
     }
 
     update() {
@@ -134,6 +152,7 @@ export class HudScene extends Phaser.Scene {
         }
 
         this.drawCard(state, w, h);
+        this.palette.draw(state);
         this.roster.draw(this.game_.squad);
         this.minimap.draw({
             squad: this.game_.squad,

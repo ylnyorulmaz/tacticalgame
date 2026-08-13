@@ -11,6 +11,7 @@ import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
 import { updateCover } from '../systems/cover.js';
+import * as orders from '../systems/orders.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
@@ -32,6 +33,7 @@ export class GameScene extends Phaser.Scene {
         this.outcome = null;
         this.outcomeAnnounced = false;
         this.feed = [];          // newest-first lines for the HUD event feed
+        this.pendingOrder = null; // aimed verb waiting for a click, shown by the HUD
         // A fresh level every mission: doors carry open/shut state.
         this.level = buildMap(this.mapId);
         const level = this.level;
@@ -129,13 +131,17 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('select');
     }
 
-    issueMoveOrder(x, y, queue) {
+    issueMoveOrder(x, y, queue, facing = null) {
         if (this.outcome || this.selected.length === 0) return;
         const targets = formationTargets(x, y, this.selected.length);
         let ordered = 0;
 
         this.selected.forEach((unit, i) => {
             if (!unit.alive) return;
+            // Walking somewhere supersedes standing and suppressing, or waiting
+            // beside a door.
+            orders.clearOnMove(unit);
+            unit.order.facing = facing;
             const wanted = targets[i];
             const cell = this.nav.cellAtWorld(wanted.x, wanted.y);
             const open = this.nav.nearestOpen(cell.cx, cell.cy);
@@ -161,6 +167,86 @@ export class GameScene extends Phaser.Scene {
         });
 
         if (ordered > 0) this.audio.play('order');
+    }
+
+    // --- Order verbs -------------------------------------------------------
+    // Each one applies to the current selection and reports itself in the feed,
+    // because an order you cannot see the result of is an order you stop using.
+
+    orderHold() {
+        if (this.outcome || this.selected.length === 0) return;
+        const stance = orders.toggleHold(this.selected);
+        this.audio.play('order');
+        this.pushFeed(stance === 'hold' ? 'Holding fire' : 'Weapons free', '#ffd24a');
+    }
+
+    orderPace() {
+        if (this.outcome || this.selected.length === 0) return;
+        const pace = orders.cyclePace(this.selected);
+        this.audio.play('order');
+        this.pushFeed(`Pace: ${pace}`, '#cfe9ff');
+    }
+
+    orderGo() {
+        if (this.outcome) return;
+        const waiting = this.squad.filter((u) => u.alive && u.order.stackAt);
+        if (waiting.length === 0) return;
+        orders.goBreach(waiting, this.ctx);
+        this.audio.play('order');
+        this.pushFeed(`GO — ${waiting.length} through the door`, '#ffd24a');
+    }
+
+    // The three verbs that need a point on the map: armed by a key, resolved by
+    // the next click.
+    resolveAimedOrder(verb, x, y) {
+        if (this.outcome || this.selected.length === 0) return;
+
+        if (verb === 'suppress') {
+            const ordered = orders.setSuppress(this.selected, x, y);
+            if (ordered === 0) {
+                this.pushFeed('Too far to suppress', '#ff6b6b');
+                return;
+            }
+            this.audio.play('order');
+            this.pushFeed(`Suppressing — ${ordered} on the gun`, '#ffd24a');
+            return;
+        }
+
+        if (verb === 'frag') {
+            const thrower = orders.setThrow(this.selected, x, y, 'frag');
+            if (!thrower) {
+                this.pushFeed('No grenade in range', '#ff6b6b');
+                return;
+            }
+            this.audio.play('order');
+            this.pushFeed(`${thrower.stats.name}: frag out`, '#ffd24a');
+            return;
+        }
+
+        if (verb === 'stack') {
+            const door = this.nearestClosedDoor(x, y);
+            if (!door) {
+                this.pushFeed('No door there', '#ff6b6b');
+                return;
+            }
+            const ordered = orders.stackOn(this.selected, door, this.ctx);
+            if (ordered === 0) return;
+            this.audio.play('order');
+            this.pushFeed(`Stacking on ${door.id} — Enter to go`, '#7fd8ff');
+        }
+    }
+
+    nearestClosedDoor(x, y, reach = 90) {
+        let best = null;
+        let bestDist = reach;
+        for (const door of this.level.doors) {
+            if (door.open) continue;
+            const dist = Math.hypot(door.x + door.w / 2 - x, door.y + door.h / 2 - y);
+            if (dist > bestDist) continue;
+            best = door;
+            bestDist = dist;
+        }
+        return best;
     }
 
     update(time, delta) {
@@ -256,6 +342,13 @@ export class GameScene extends Phaser.Scene {
         return {
             cls: lead ? lead.cls : null,
             grenadesLeft: lead ? lead.grenadesLeft : 0,
+            // What the order palette needs to show the state of the selection.
+            hasSelection: this.selected.length > 0,
+            stance: lead ? lead.order.stance : 'free',
+            pace: lead ? lead.order.pace : 'normal',
+            suppressing: this.selected.some((u) => u.order.suppressAt),
+            stacked: this.squad.filter((u) => u.alive && u.order.stackAt).length,
+            pendingOrder: this.pendingOrder,
             hostilesTotal: this.hostiles.length,
             hostilesDown: this.hostiles.filter((u) => !u.alive).length,
             squadTotal: this.squad.length,

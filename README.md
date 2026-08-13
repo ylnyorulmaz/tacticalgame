@@ -39,8 +39,15 @@ automatic offline fallback, so the game still boots without a network.
 | Left click | Select a unit |
 | Left drag | Box-select several units |
 | Right click | Move order (units spread into a loose formation) |
+| Right **drag** | Move, and face the way you dragged when you arrive |
 | Shift + right click | Queue another waypoint |
 | `Space` | Pause / unpause — orders can still be issued while paused |
+| `F` | Hold fire / weapons free |
+| `Q` then click | Suppress that patch of ground — no target needed |
+| `G` then click | Throw a frag exactly there |
+| `E` then click a door | Stack beside it and wait |
+| `Enter` | GO — everyone stacked goes through together |
+| `Z` | Pace: normal → sprint (fast, no shooting) → careful (slow, stays set) |
 | `Tab` | Cycle through the squad |
 | `1`–`6` | Select a specific unit (hold Shift to add) |
 | `Ctrl`+`A` | Select the whole squad |
@@ -134,8 +141,18 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   shaped to the weapon — a wide bloom for buckshot, a long lance for the marksman
   — ejects brass, and leaves a wisp of smoke. Rounds strike walls in dust and
   sparks; grenades trail smoke and burst into a shockwave ring and debris.
+- **Orders, not just move.** Firing is still automatic, but you can override it:
+  hold fire to move without starting a fight, put suppressive fire on a doorway
+  so nobody in it dares lean out, place a frag by hand instead of waiting for the
+  grenadier to decide, drag a move order to say which way to face on arrival, and
+  stack a team beside a door so they go through together on your word. Pace is a
+  choice too — sprinting is fast with the weapon down, creeping is slow but keeps
+  the marksman set. `src/systems/orders.js` owns all of it; every unit carries one
+  order record, and an untouched record behaves exactly as the game did before.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
+  With orders in the game the pause is a planning phase rather than a freeze
+  frame — the whole squad can be given its part of a plan before anyone moves.
 - **Sound.** Every weapon has its own report, and there are effects for grenades
   and their detonation, rounds striking walls and bodies, a door going in, a
   squadmate going down or being revived, and the mission ending. Playback is
@@ -164,6 +181,12 @@ npm test
   valid, fresh door state per build, and every weapon sound resolving to a real
   entry in the generated bank. The map suite has already caught a hostile spawned
   inside a crate and a patrol waypoint inside a wreck.
+- `test/tactics.test.mjs` also runs in plain Node: it builds a headless world
+  with the same systems in the same update order as `GameScene` and asserts the
+  tactical rules directly — a unit on hold fires nothing, ordered suppression
+  pins whoever is standing in it, a sprinter does not shoot, a careful marksman
+  stays set while moving, a stacked unit waits for the word before the door goes
+  in, and an aimed throw spends exactly one grenade.
 - `test/smoke.test.mjs` drives the real game in Chromium via Playwright: menu →
   mission → win → back to the menu, with a clean console. It is skipped with a
   notice if Playwright is not installed. On a machine with a global install,

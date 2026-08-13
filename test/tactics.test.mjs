@@ -1,0 +1,247 @@
+// Behaviour tests for the tactical layer: orders, and (as they land) tools,
+// alarm state and objectives. Plain Node — the simulation systems deliberately
+// touch no browser APIs, so the rules can be asserted without a renderer.
+//
+// Each case builds a tiny world, places units by hand rather than using map
+// spawns, and fast-forwards in fixed 16 ms steps.
+
+import { buildMap } from '../src/maps/index.js';
+import { NavGrid } from '../src/systems/nav.js';
+import { VisionSystem } from '../src/systems/vision.js';
+import { CombatSystem } from '../src/systems/combat.js';
+import { Unit, doorAtPoint } from '../src/systems/units.js';
+import { updateHostile } from '../src/systems/ai.js';
+import * as orders from '../src/systems/orders.js';
+import { SUPPRESSION } from '../src/config.js';
+
+export const name = 'tactics';
+
+const STEP = 16;
+
+// A headless stand-in for GameScene: the same systems, the same update order,
+// none of the rendering.
+function world(mapId = 'compound') {
+    const level = buildMap(mapId);
+    const vision = new VisionSystem(level);
+    const nav = new NavGrid(level);
+    const combat = new CombatSystem(level, vision);
+    const units = [];
+    const w = {
+        level, vision, nav, combat, units,
+        now: 0,
+        friendlies: [],
+        hostiles: [],
+    };
+
+    w.ctx = {
+        vision, nav,
+        friendlies: w.friendlies,
+        hostiles: w.hostiles,
+        noises: combat.noises,
+        blocked: (x, y) => nav.isBlockedWorld(x, y) || !!doorAtPoint(level.doors, x, y, 2),
+        closedDoorAt: (x, y) => doorAtPoint(level.doors, x, y, 10),
+        openDoor: (door) => {
+            if (door.open) return;
+            door.open = true;
+            nav.rebuild();
+            vision.refreshSegments();
+            combat.refreshBlockers();
+        },
+        repath: (unit, point) => unit.setPath(nav.findPath(unit.x, unit.y, point.x, point.y)),
+    };
+
+    w.add = (cls, x, y, facing = 0) => {
+        const unit = new Unit({ cls, x, y, facing });
+        units.push(unit);
+        (unit.isFriendly ? w.friendlies : w.hostiles).push(unit);
+        return unit;
+    };
+
+    // Same order as GameScene.update, minus rendering and outcome checks.
+    w.run = (ms) => {
+        for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
+            w.now += STEP;
+            for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
+            for (const unit of units) unit.update(STEP, w.ctx);
+            combat.update(STEP, units, w.now);
+            combat.events.length = 0;
+        }
+    };
+
+    // Rounds fired by one unit, counted off the event stream as it drains. Only
+    // that unit's rounds count — return fire from the other side is not the
+    // thing under test.
+    w.countShots = (ms, who) => {
+        let shots = 0;
+        for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
+            w.now += STEP;
+            for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
+            for (const unit of units) unit.update(STEP, w.ctx);
+            combat.update(STEP, units, w.now);
+            shots += combat.events.filter(
+                (e) => e.kind === 'shot' && (!who || e.unit === who.id),
+            ).length;
+            combat.events.length = 0;
+        }
+        return shots;
+    };
+
+    return w;
+}
+
+// Somewhere in the open on the compound map, well clear of the building.
+const OPEN = { x: 300, y: 1200 };
+
+export function run(t) {
+    holdFire(t);
+    suppressGround(t);
+    pace(t);
+    stackAndBreach(t);
+    arrivalFacing(t);
+    aimedThrow(t);
+}
+
+function holdFire(t) {
+    const w = world();
+    const shooter = w.add('operator', OPEN.x, OPEN.y);
+    const target = w.add('hostile', OPEN.x + 200, OPEN.y);
+    target.maxHp = 1e6;
+    target.hp = 1e6;
+
+    orders.toggleHold([shooter]);
+    t.equal(shooter.order.stance, 'hold', 'hold fire sets the stance');
+    t.equal(w.countShots(3000, shooter), 0, 'a unit on hold fires nothing at a target in the open');
+    t.ok(!!shooter.target, 'it still tracks the target while holding');
+
+    orders.toggleHold([shooter]);
+    t.ok(w.countShots(3000, shooter) > 0, 'releasing the stance opens fire');
+}
+
+function suppressGround(t) {
+    const w = world();
+    const gunner = w.add('machinegunner', OPEN.x, OPEN.y);
+    // A hostile standing on the beaten zone, tough enough to survive being shot
+    // at for three seconds so the suppression number is what gets measured.
+    const victim = w.add('hostile', OPEN.x + 300, OPEN.y);
+    victim.maxHp = 1e6;
+    victim.hp = 1e6;
+
+    orders.setSuppress([gunner], OPEN.x + 300, OPEN.y);
+    t.ok(!!gunner.order.suppressAt, 'the suppress order lands on the unit');
+
+    // Suppression decays continuously, so what matters is whether the pressure
+    // ever got high enough to put a head down, not where it happens to sit at
+    // the end of the run.
+    let shots = 0;
+    let peak = 0;
+    let pinned = false;
+    for (let i = 0; i < 16; i++) {
+        shots += w.countShots(250, gunner);
+        peak = Math.max(peak, victim.suppression);
+        pinned = pinned || victim.pinned;
+    }
+    t.ok(shots > 0, `ordered fire goes out without an acquired target (${shots} rounds)`);
+    t.ok(
+        pinned && peak >= SUPPRESSION.threshold,
+        `rounds on the position pin whoever is standing there (peak ${Math.round(peak)})`,
+    );
+
+    // Out of reach is refused rather than silently accepted.
+    const other = world();
+    const far = other.add('operator', OPEN.x, OPEN.y);
+    t.equal(orders.setSuppress([far], OPEN.x + 4000, OPEN.y), 0, 'a spot out of range is refused');
+}
+
+function pace(t) {
+    const w = world();
+    const walker = w.add('operator', OPEN.x, OPEN.y);
+    const runner = w.add('operator', OPEN.x, OPEN.y + 60);
+    const goal = { x: OPEN.x + 600, y: OPEN.y };
+    w.ctx.repath(walker, goal);
+    w.ctx.repath(runner, { x: goal.x, y: goal.y + 60 });
+    orders.cyclePace([runner]);
+    t.equal(runner.order.pace, 'sprint', 'the first pace step is sprint');
+
+    const from = runner.x;
+    const walkFrom = walker.x;
+    w.run(1000);
+    t.ok(runner.x - from > walker.x - walkFrom, 'a sprinting unit covers more ground');
+
+    // Sprinting means the weapon is down.
+    const s = world();
+    const sprinter = s.add('operator', OPEN.x, OPEN.y);
+    const enemy = s.add('hostile', OPEN.x + 250, OPEN.y);
+    enemy.maxHp = 1e6;
+    enemy.hp = 1e6;
+    orders.cyclePace([sprinter]);
+    s.ctx.repath(sprinter, { x: OPEN.x, y: OPEN.y + 600 });
+    t.equal(s.countShots(1500, sprinter), 0, 'a sprinting unit does not shoot');
+
+    // Creeping keeps a marksman set, which is the reason to order it.
+    const c = world();
+    const marksman = c.add('marksman', OPEN.x, OPEN.y);
+    orders.cyclePace([marksman]);
+    orders.cyclePace([marksman]);
+    t.equal(marksman.order.pace, 'careful', 'the second pace step is careful');
+    c.ctx.repath(marksman, { x: OPEN.x + 400, y: OPEN.y });
+    c.run(1200);
+    t.ok(
+        marksman.isMoving && marksman.stationaryFor >= marksman.stats.steadyTime,
+        'a careful marksman stays set while it moves',
+    );
+}
+
+function stackAndBreach(t) {
+    const w = world();
+    const door = w.level.doors[0];
+    // Start from the squad's own deployment area so the door is approachable.
+    const spec = w.level.squad[0];
+    const breacher = w.add('breacher', spec.x, spec.y);
+
+    t.ok(orders.stackOn([breacher], door, w.ctx) === 1, 'stacking issues a route to the door');
+    w.run(14000);
+    t.ok(!door.open, 'a stacked unit waits rather than forcing the door');
+    t.ok(
+        Math.hypot(breacher.x - (door.x + door.w / 2), breacher.y - (door.y + door.h / 2)) < 120,
+        'it waits within reach of the door',
+    );
+
+    orders.goBreach([breacher], w.ctx);
+    t.equal(breacher.order.stackAt, null, 'GO releases the stack');
+    w.run(8000);
+    t.ok(door.open, 'GO puts the unit through the door');
+}
+
+function arrivalFacing(t) {
+    const w = world();
+    const unit = w.add('operator', OPEN.x, OPEN.y, 0);
+    const facing = -Math.PI / 2;   // told to watch north on arrival
+    unit.order.facing = facing;
+    w.ctx.repath(unit, { x: OPEN.x + 300, y: OPEN.y });
+    w.run(6000);
+    t.ok(!unit.path, 'the unit reaches its move order');
+    t.ok(
+        Math.abs(Math.atan2(Math.sin(unit.facing - facing), Math.cos(unit.facing - facing))) < 0.05,
+        'and holds the arrival facing it was given rather than its travel direction',
+    );
+}
+
+function aimedThrow(t) {
+    const w = world();
+    const grenadier = w.add('grenadier', OPEN.x, OPEN.y);
+    const victim = w.add('hostile', OPEN.x + 320, OPEN.y);
+    victim.maxHp = 1e6;
+    victim.hp = 1e6;
+
+    const thrower = orders.setThrow([grenadier], OPEN.x + 320, OPEN.y, 'frag');
+    t.equal(thrower, grenadier, 'the aimed throw goes to the unit that can make it');
+    const before = grenadier.grenadesLeft;
+    w.run(2500);
+    t.equal(grenadier.grenadesLeft, before - 1, 'exactly one grenade leaves the pouch');
+    t.equal(grenadier.order.throwAt, null, 'and the order clears once it is out');
+
+    // Nobody in the selection can throw: the order is refused, not queued.
+    const none = world();
+    const rifleman = none.add('operator', OPEN.x, OPEN.y);
+    t.equal(orders.setThrow([rifleman], OPEN.x + 200, OPEN.y, 'frag'), null, 'a unit with no grenades refuses');
+}

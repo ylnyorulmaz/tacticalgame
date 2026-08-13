@@ -266,6 +266,18 @@ export const UNIT_CLASSES = {
     },
 };
 
+// Orders the player gives on top of "move here". Defaults are chosen so a unit
+// with an untouched order record behaves exactly as it did before orders existed.
+export const ORDERS = {
+    paces: ['normal', 'sprint', 'careful'],
+    sprintScale: 1.45,      // fast, but no shooting on the move
+    carefulScale: 0.6,      // slow, and stays set: the marksman can creep and shoot
+    suppressSpread: 0.06,   // extra cone on fire aimed at ground rather than a body
+    suppressSuppression: 45, // pressure each ordered round applies, whatever the weapon
+    throwRange: 430,        // how far an aimed grenade can be placed
+    stackOffset: 34,        // how far to one side of a door a stacked unit waits
+};
+
 export const AI = {
     reactionTime: 420,      // ms of contact before a hostile opens fire
     hearingRange: 620,      // gunfire within this radius pulls a hostile to ALERT
