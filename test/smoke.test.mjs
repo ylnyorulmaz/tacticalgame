@@ -88,7 +88,8 @@ export async function run(t, { chromium }) {
         t.ok(state.audio, 'the sound bank loaded');
         t.ok(state.fps > 0, `the loop is running (${state.fps} fps)`);
 
-        // And back out again.
+        // Warehouse is an intel run, so clearing it is not the same as winning:
+        // the mission ends when the objectives say it does.
         await page.evaluate(() => {
             const s = window.__cqb.scene.getScene('game');
             s.hostiles.forEach((h) => h.takeDamage(9999));
@@ -96,9 +97,42 @@ export async function run(t, { chromium }) {
         await page.waitForTimeout(600);
         t.equal(
             await page.evaluate(() => window.__cqb.scene.getScene('game').outcome),
-            'win',
-            'clearing the map wins the mission',
+            null,
+            'clearing the map is not enough on an intel mission',
         );
+
+        // Stand on the intel, then walk everyone into the extraction zone.
+        await page.evaluate(() => {
+            const s = window.__cqb.scene.getScene('game');
+            const intel = s.objectives.list.find((o) => o.kind === 'intel');
+            s.squad.forEach((u) => { u.x = intel.x; u.y = intel.y; });
+        });
+        // Software rendering runs the simulation well under real time, so wait
+        // on the state rather than on the clock.
+        const picked = await page.waitForFunction(
+            () => window.__cqb.scene.getScene('game').objectives.list
+                .find((o) => o.kind === 'intel').done,
+            null,
+            { timeout: 20000 },
+        ).then(() => true, () => false);
+        t.ok(picked, 'standing on the intel picks it up');
+
+        await page.evaluate(() => {
+            const s = window.__cqb.scene.getScene('game');
+            const zone = s.objectives.exfil;
+            s.squad.forEach((u) => { u.x = zone.x + zone.w / 2; u.y = zone.y + zone.h / 2; });
+        });
+        await page.waitForFunction(
+            () => !!window.__cqb.scene.getScene('game').outcome,
+            null,
+            { timeout: 20000 },
+        ).catch(() => {});
+        const finish = await page.evaluate(() => {
+            const s = window.__cqb.scene.getScene('game');
+            return { outcome: s.outcome, grade: s.rating && s.rating.grade };
+        });
+        t.equal(finish.outcome, 'win', 'exfil with the intel wins the mission');
+        t.ok(!!finish.grade, `and the run is graded (${finish.grade})`);
 
         await page.keyboard.press('Escape');
         await page.waitForTimeout(900);

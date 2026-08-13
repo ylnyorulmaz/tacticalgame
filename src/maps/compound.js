@@ -84,6 +84,10 @@ export function build() {
         // Where a second team walks in from once the alarm goes up: the road
         // to the north and the yard track to the east.
         reinforce: [{ x: 1240, y: 120 }, { x: 2240, y: 700 }],
+        // The tutorial mission: one building, everyone in it.
+        objectives: [
+            { kind: 'eliminate', label: 'Clear the compound' },
+        ],
         cameraStart: { x: 1180, y: 1060 },
     };
 }

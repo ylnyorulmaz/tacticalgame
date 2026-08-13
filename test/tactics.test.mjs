@@ -14,6 +14,7 @@ import { updateHostile } from '../src/systems/ai.js';
 import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
 import { AlarmSystem, CALM, ALARMED } from '../src/systems/alarm.js';
+import { ObjectiveSystem, rateMission } from '../src/systems/objectives.js';
 import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM } from '../src/config.js';
 
 export const name = 'tactics';
@@ -28,9 +29,10 @@ function world(mapId = 'compound') {
     const nav = new NavGrid(level);
     const combat = new CombatSystem(level, vision);
     const alarm = new AlarmSystem();
+    const objectives = new ObjectiveSystem(level);
     const units = [];
     const w = {
-        level, vision, nav, combat, alarm, units,
+        level, vision, nav, combat, alarm, objectives, units,
         now: 0,
         friendlies: [],
         hostiles: [],
@@ -55,10 +57,13 @@ function world(mapId = 'compound') {
         repath: (unit, point) => unit.setPath(nav.findPath(unit.x, unit.y, point.x, point.y)),
     };
 
+    // Classified by team, not by "not friendly": a civilian belongs to neither
+    // side, exactly as GameScene keeps them out of both lists.
     w.add = (cls, x, y, facing = 0) => {
         const unit = new Unit({ cls, x, y, facing });
         units.push(unit);
-        (unit.isFriendly ? w.friendlies : w.hostiles).push(unit);
+        if (unit.team === 'friendly') w.friendlies.push(unit);
+        else if (unit.team === 'hostile') w.hostiles.push(unit);
         return unit;
     };
 
@@ -72,6 +77,8 @@ function world(mapId = 'compound') {
             vision.setClouds(combat.clouds);
             alarm.update(STEP, w.ctx);
             alarm.drain();
+            objectives.update(STEP, w.ctx);
+            objectives.drain();
             combat.events.length = 0;
         }
     };
@@ -89,6 +96,8 @@ function world(mapId = 'compound') {
             vision.setClouds(combat.clouds);
             alarm.update(STEP, w.ctx);
             alarm.drain();
+            objectives.update(STEP, w.ctx);
+            objectives.drain();
             shots += combat.events.filter(
                 (e) => e.kind === 'shot' && (!who || e.unit === who.id),
             ).length;
@@ -115,6 +124,87 @@ export function run(t) {
     flashbang(t);
     breachingCharge(t);
     alarm(t);
+    objectives(t);
+    rating(t);
+}
+
+// What the mission is for. Two of the three maps end on something other than
+// "everyone is dead", so this is the part that has to be right.
+function objectives(t) {
+    // Warehouse: intel then exfil, with clearing the place only a bonus.
+    const w = world('warehouse');
+    const squad = w.level.squad.map((spec) => w.add(spec.cls, spec.x, spec.y));
+    const intel = w.objectives.list.find((o) => o.kind === 'intel');
+    const zone = w.objectives.exfil;
+    t.ok(!!intel && !!zone, 'the warehouse is an intel run with an extraction zone');
+
+    // In the zone but empty-handed: not a win.
+    for (const unit of squad) {
+        unit.x = zone.x + zone.w / 2;
+        unit.y = zone.y + zone.h / 2;
+    }
+    w.run(1200);
+    t.ok(!w.objectives.complete, 'exfil alone does not finish an intel mission');
+
+    // Pick it up, then walk out.
+    for (const unit of squad) {
+        unit.x = intel.x;
+        unit.y = intel.y;
+    }
+    w.run(1500);
+    t.ok(intel.done, 'standing on the intel picks it up');
+    t.ok(!w.objectives.complete, 'and having it is not the same as being out');
+
+    for (const unit of squad) {
+        unit.x = zone.x + zone.w / 2;
+        unit.y = zone.y + zone.h / 2;
+    }
+    w.run(600);
+    t.ok(w.objectives.complete, 'intel plus everyone in the zone finishes it');
+
+    // Outpost: a hostage who follows you out, and dies if you are careless.
+    const o = world('outpost');
+    const rescue = o.objectives.list.find((r) => r.kind === 'rescue');
+    const hostage = o.add('hostage', rescue.x, rescue.y);
+    o.objectives.hostage = hostage;
+    const rescuer = o.add('operator', rescue.x + 400, rescue.y);
+    t.ok(!hostage.freed, 'the hostage starts where the map put them');
+
+    rescuer.x = rescue.x + 30;
+    rescuer.y = rescue.y;
+    o.run(200);
+    t.ok(hostage.freed, 'reaching them frees them');
+
+    // They follow: put the rescuer somewhere reachable and watch the gap close.
+    rescuer.x = rescue.x - 60;
+    rescuer.y = rescue.y - 100;
+    const gapBefore = Math.hypot(hostage.x - rescuer.x, hostage.y - rescuer.y);
+    o.run(4000);
+    const gapAfter = Math.hypot(hostage.x - rescuer.x, hostage.y - rescuer.y);
+    t.ok(gapAfter < gapBefore, `a freed hostage follows (${Math.round(gapBefore)} → ${Math.round(gapAfter)})`);
+
+    hostage.takeDamage(9999);
+    o.run(100);
+    t.ok(o.objectives.failed, 'and a dead hostage is a failed mission');
+}
+
+function rating(t) {
+    const clean = rateMission({ timeMs: 120000, casualties: 0, alarmRaised: false, bonusDone: false });
+    const loud = rateMission({ timeMs: 120000, casualties: 0, alarmRaised: true, bonusDone: false });
+    const costly = rateMission({ timeMs: 120000, casualties: 3, alarmRaised: true, bonusDone: false });
+
+    t.equal(clean.grade, 'S', `a quiet run with everyone alive grades top (${clean.score})`);
+    t.ok(loud.score < clean.score, 'raising the alarm costs you');
+    t.ok(costly.score < loud.score, 'and losing people costs more');
+
+    // Monotonic in casualties, which is the property that keeps the grade honest.
+    let last = Infinity;
+    for (let dead = 0; dead <= 6; dead++) {
+        const score = rateMission({ timeMs: 60000, casualties: dead, alarmRaised: false }).score;
+        if (score > last) last = -1;
+        else last = score;
+    }
+    t.ok(last >= 0, 'the score never improves when more of the squad dies');
 }
 
 // The garrison's state of mind. The whole reason to carry a suppressed weapon is

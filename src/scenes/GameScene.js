@@ -13,6 +13,7 @@ import { updateSupport } from '../systems/support.js';
 import { updateCover } from '../systems/cover.js';
 import * as orders from '../systems/orders.js';
 import { AlarmSystem, ALARMED } from '../systems/alarm.js';
+import { ObjectiveSystem, rateMission } from '../systems/objectives.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
@@ -33,6 +34,8 @@ export class GameScene extends Phaser.Scene {
         this.paused = false;
         this.outcome = null;
         this.outcomeAnnounced = false;
+        this.failure = null;
+        this.rating = null;
         this.feed = [];          // newest-first lines for the HUD event feed
         this.pendingOrder = null; // aimed verb waiting for a click, shown by the HUD
         // A fresh level every mission: doors carry open/shut state.
@@ -60,6 +63,19 @@ export class GameScene extends Phaser.Scene {
         });
         this.units = [...this.squad, ...this.hostiles];
         this.selected = [];
+
+        this.objectives = new ObjectiveSystem(level);
+        // A rescue needs somebody to rescue. They start where the map says and
+        // do not move until an operator reaches them.
+        const rescue = this.objectives.list.find((o) => o.kind === 'rescue');
+        if (rescue) {
+            const hostage = new Unit({ cls: 'hostage', x: rescue.x, y: rescue.y, facing: Math.PI / 2 });
+            this.objectives.hostage = hostage;
+            this.units.push(hostage);
+        }
+        // For the end-of-mission grade.
+        this.startedAt = null;
+        this.shotsFired = 0;
 
         this.ctx = {
             vision: this.vision,
@@ -292,7 +308,10 @@ export class GameScene extends Phaser.Scene {
             this.effects.update(dt, this.combat.projectiles);
             this.alarm.update(dt, this.ctx);
             this.announceAlarm();
-            this.checkOutcome();
+            this.objectives.update(dt, this.ctx);
+            this.announceObjectives();
+            if (this.startedAt === null) this.startedAt = time;
+            this.checkOutcome(time);
         }
 
         // One event stream, two consumers: the audio engine reads `type`, the
@@ -300,6 +319,7 @@ export class GameScene extends Phaser.Scene {
         // even while paused, so the last shots before a pause are not swallowed.
         if (this.combat.events.length > 0) {
             for (const event of this.combat.events) {
+                if (event.kind === 'shot') this.shotsFired++;
                 this.audio.play(event.type, event.x, event.y);
                 this.effects.handle(event);
                 this.recordEvent(event);
@@ -322,6 +342,7 @@ export class GameScene extends Phaser.Scene {
             projectiles: this.combat.projectiles,
             explosions: this.combat.explosions,
             clouds: this.combat.clouds,
+            objectives: this.objectives,
             effects: this.effects,
             time,
             vision: this.vision,
@@ -370,18 +391,40 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
+    announceObjectives() {
+        for (const objective of this.objectives.drain()) {
+            this.audio.play('objective');
+            this.pushFeed(`✔ ${objective.label || objective.kind}`, '#7df07d');
+        }
+    }
+
     pushFeed(text, color) {
         this.feed.unshift({ text, color, at: this.time.now });
         this.feed.length = Math.min(this.feed.length, 5);
     }
 
-    checkOutcome() {
-        // A downed squadmate is not a lost one until it bleeds out.
-        if (this.hostiles.every((u) => !u.alive)) this.outcome = 'win';
-        else if (this.squad.every((u) => !u.alive && !u.downed)) this.outcome = 'lose';
+    // The mission ends when its objectives say so, not when the last hostile
+    // falls — on two of the three maps those are different moments.
+    checkOutcome(time) {
+        if (this.objectives.failed) {
+            this.outcome = 'lose';
+            this.failure = this.objectives.failure;
+        } else if (this.objectives.complete) {
+            this.outcome = 'win';
+        } else if (this.squad.every((u) => !u.alive && !u.downed)) {
+            // A downed squadmate is not a lost one until it bleeds out.
+            this.outcome = 'lose';
+            this.failure = 'Squad eliminated';
+        }
         if (this.outcome && !this.outcomeAnnounced) {
             this.outcomeAnnounced = true;
             this.audio.play(this.outcome);
+            this.rating = rateMission({
+                timeMs: time - (this.startedAt ?? time),
+                casualties: this.squad.filter((u) => !u.alive && !u.downed).length,
+                alarmRaised: this.alarm.everAlarmed,
+                bonusDone: this.objectives.list.some((o) => o.optional && o.done),
+            });
         }
     }
 
@@ -410,8 +453,12 @@ export class GameScene extends Phaser.Scene {
             squadDown: this.squad.filter((u) => u.downed).length,
             feed: this.feed,
             alarm: this.alarm.state,
+            objectives: this.objectives.status(),
+            shotsFired: this.shotsFired,
             paused: this.paused,
             outcome: this.outcome,
+            failure: this.failure,
+            rating: this.rating,
             muted: this.audio.muted || !this.audio.available,
         };
     }

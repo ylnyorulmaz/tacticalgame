@@ -220,6 +220,33 @@ export const UNIT_CLASSES = {
         bars: { Speed: 3, Firepower: 7, Survivability: 7, Range: 6 },
         ability: 'Sustained fire pins hostiles',
     },
+    // Not a fighter: carries nothing, shoots at nobody, and is not deliberately
+    // targeted by either side. Stray rounds and blast are what kill them, which
+    // is exactly why a frag is the wrong tool on a rescue.
+    hostage: {
+        id: 'hostage',
+        name: 'Hostage',
+        team: 'civilian',
+        noncombatant: true,
+        hp: 60,
+        speed: 126,
+        sight: 220,
+        turnSpeed: 7,
+        breachTime: 99999,
+        weapon: {
+            name: 'Unarmed',
+            sound: 'carbine',
+            damage: 0,
+            cooldown: 99999,
+            spread: 0,
+            range: 0,
+            bulletSpeed: 1,
+            burst: 1,
+            burstGap: 0,
+        },
+        bars: { Speed: 6, Firepower: 0, Survivability: 2, Range: 0 },
+        ability: 'Get them out alive',
+    },
     hostile: {
         id: 'hostile',
         name: 'Hostile',
@@ -362,6 +389,24 @@ export const AI = {
     retreatHp: 0.3,
     retreatDistance: 420,
     retreatTime: 4000,
+};
+
+// Winning is not the same as winning well. Missions are standalone, so the
+// grade is the only reason to run one twice.
+export const RATING = {
+    parTime: 240000,        // ms a clean run is expected to take
+    perCasualty: 18,        // every squadmate you lose
+    alarmPenalty: 22,       // going loud at all
+    perMinuteLate: 6,
+    latePenaltyCap: 20,
+    bonus: 10,              // optional objectives
+    grades: [
+        { min: 92, letter: 'S', note: 'Textbook' },
+        { min: 80, letter: 'A', note: 'Clean' },
+        { min: 65, letter: 'B', note: 'Solid' },
+        { min: 48, letter: 'C', note: 'Messy' },
+        { min: 0, letter: 'D', note: 'Costly' },
+    ],
 };
 
 // The garrison as a whole, rather than one hostile at a time. Going loud is a

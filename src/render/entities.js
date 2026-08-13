@@ -66,6 +66,10 @@ export class EntityRenderer {
         const visible = (x, y) => vision.canAnySee(friendlies, x, y);
         if (effects) effects.draw(debris, fx, visible);
 
+        // Objective markers go on the ground, under the fog: an extraction zone
+        // you have not scouted stays hidden like everything else.
+        if (state.objectives) drawObjectives(ground, state.objectives, state.time);
+
         for (const unit of units) {
             if (unit.alive) continue;
             drawCorpse(ground, unit);
@@ -81,7 +85,8 @@ export class EntityRenderer {
                 continue;
             }
             unit.lastKnownToPlayer = { x: unit.x, y: unit.y };
-            drawUnit(top, fx, unit);
+            if (unit.stats.noncombatant) drawHostage(top, unit, state.time);
+            else drawUnit(top, fx, unit);
             if (unit.selected) drawSelection(overlay, unit);
             if (unit.hp < unit.maxHp) drawHealthBar(overlay, unit);
             if (unit.breaching) drawBreachRing(overlay, unit);
@@ -126,6 +131,59 @@ export class EntityRenderer {
                 drawFacingCone(overlay, at, unit.order.facing);
             }
         }
+    }
+}
+
+// Where the mission is. An extraction zone is a hatched box, a pickup is a
+// pulsing ring, and both stop being drawn once they are done with.
+function drawObjectives(g, objectives, time) {
+    const pulse = 0.55 + 0.45 * Math.sin(time / 320);
+
+    for (const objective of objectives.list) {
+        if (objective.kind === 'exfil') {
+            const ready = objectives.required.every((o) => o === objective || o.done);
+            const color = objective.done ? 0x7df07d : ready ? 0x7df07d : 0xcfe9ff;
+            g.lineStyle(3, color, ready ? 0.4 + 0.4 * pulse : 0.4);
+            g.strokeRect(objective.x, objective.y, objective.w, objective.h);
+            g.lineStyle(2, color, 0.22);
+            for (let x = objective.x; x < objective.x + objective.w; x += 26) {
+                g.lineBetween(
+                    x, objective.y + objective.h,
+                    Math.min(x + objective.h, objective.x + objective.w), objective.y,
+                );
+            }
+            continue;
+        }
+
+        if (objective.kind === 'intel' && !objective.done) {
+            g.lineStyle(3, 0xffd24a, 0.5 + 0.5 * pulse);
+            g.strokeCircle(objective.x, objective.y, 26);
+            if (objective.progress > 0) {
+                g.lineStyle(4, 0x7df07d, 0.95);
+                g.beginPath();
+                g.arc(objective.x, objective.y, 32, -Math.PI / 2, -Math.PI / 2 + objective.progress * Math.PI * 2);
+                g.strokePath();
+            }
+        }
+    }
+}
+
+// A civilian: no weapon, and a ring so they are never mistaken for a shooter.
+function drawHostage(g, unit, time) {
+    const pulse = 0.6 + 0.4 * Math.sin(time / 260);
+    g.fillStyle(0xf2e6c8, 1);
+    g.fillCircle(unit.x, unit.y, unit.radius);
+    g.lineStyle(3, unit.freed ? 0x7df07d : 0xffd24a, 0.5 + 0.4 * pulse);
+    g.strokeCircle(unit.x, unit.y, unit.radius + 6);
+    // Hands up: two short strokes rather than a gun.
+    g.lineStyle(3, COLORS.gun, 0.9);
+    for (const side of [-0.7, 0.7]) {
+        g.lineBetween(
+            unit.x + Math.cos(unit.facing + side) * 6,
+            unit.y + Math.sin(unit.facing + side) * 6,
+            unit.x + Math.cos(unit.facing + side) * 15,
+            unit.y + Math.sin(unit.facing + side) * 15,
+        );
     }
 }
 

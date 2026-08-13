@@ -38,6 +38,7 @@ export class CombatSystem {
 
         for (const unit of units) {
             if (!unit.alive) continue;
+            if (unit.stats.noncombatant) continue;   // hostages do not fight
 
             // An aimed throw outranks everything: the player asked for it by
             // hand and knows better than the acquisition rules what it is for.

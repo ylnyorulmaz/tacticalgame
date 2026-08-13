@@ -81,10 +81,20 @@ export class HudScene extends Phaser.Scene {
 
         this.outcomeText = label(VIEW.width / 2, VIEW.height / 2 - 40, 54, 0.5);
         this.outcomeText.setOrigin(0.5, 0.5);
-        this.outcomeHint = label(VIEW.width / 2, VIEW.height / 2 + 20, 20, 0.5);
+        this.outcomeHint = label(VIEW.width / 2, VIEW.height / 2 + 92, 20, 0.5);
         this.outcomeHint.setOrigin(0.5, 0.5);
+        this.gradeText = label(VIEW.width / 2, VIEW.height / 2 + 22, 46, 0.5, '#ffd24a');
+        this.gradeText.setOrigin(0.5, 0.5);
+        this.gradeNote = label(VIEW.width / 2, VIEW.height / 2 + 58, 16, 0.5, '#cfe9ff');
+        this.gradeNote.setOrigin(0.5, 0.5);
 
         this.hintText.setText('LMB select · RMB move, drag to set facing (Shift queues) · SPACE pause and plan · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
+
+        // Objective tracker, under the order palette.
+        this.objectiveLabels = [];
+        for (let i = 0; i < 4; i++) {
+            this.objectiveLabels.push(label(20, 88 + i * 20, 15, 0, '#cfe9ff'));
+        }
 
         // Event feed lines, newest at the top.
         for (let i = 0; i < 5; i++) {
@@ -111,12 +121,15 @@ export class HudScene extends Phaser.Scene {
             text.setPosition(w - 24 - BLOCKS * (BLOCK_W + BLOCK_GAP) - 12, h - 122 + i * 26),
         );
         this.pauseText.setPosition(w / 2, 22);
-        this.outcomeText.setPosition(w / 2, h / 2 - 40);
-        this.outcomeHint.setPosition(w / 2, h / 2 + 20);
+        this.outcomeText.setPosition(w / 2, h / 2 - 46);
+        this.gradeText.setPosition(w / 2, h / 2 + 22);
+        this.gradeNote.setPosition(w / 2, h / 2 + 58);
+        this.outcomeHint.setPosition(w / 2, h / 2 + 92);
 
         if (this.minimap) this.minimap.layout();
         if (this.palette) this.palette.layout();
         this.feedLabels.forEach((label, i) => label.setPosition(w - 20, 210 + i * 19));
+        this.objectiveLabels.forEach((label, i) => label.setPosition(20, 88 + i * 20));
         if (this.roster && this.game_.squad) this.roster.layout(this.game_.squad);
     }
 
@@ -165,6 +178,7 @@ export class HudScene extends Phaser.Scene {
             this.minimap.layout();
         }
 
+        this.drawObjectives(state.objectives || []);
         this.drawCard(state, w, h);
         this.palette.draw(state);
         this.roster.draw(this.game_.squad);
@@ -180,13 +194,40 @@ export class HudScene extends Phaser.Scene {
             this.gfx.fillStyle(0x000000, 0.55);
             this.gfx.fillRect(0, 0, w, h);
             const win = state.outcome === 'win';
-            this.outcomeText.setText(win ? 'AREA CLEAR' : 'SQUAD ELIMINATED');
+            this.outcomeText.setText(win ? 'MISSION COMPLETE' : (state.failure || 'MISSION FAILED').toUpperCase());
             this.outcomeText.setColor(win ? '#7df07d' : '#ff6b6b');
+
+            // The grade is the reason to run a map twice: winning and winning
+            // well are not the same thing.
+            const rating = state.rating;
+            this.gradeText.setText(rating ? rating.grade : '');
+            this.gradeText.setColor(win ? '#ffd24a' : '#8b9a92');
+            this.gradeNote.setText(
+                rating
+                    ? `${rating.note}  ·  ${rating.score}/100  ·  ${state.squadAlive}/${state.squadTotal} came back  ·  ${state.shotsFired} round${state.shotsFired === 1 ? '' : 's'} fired${state.alarm === 'calm' ? '  ·  never detected' : ''}`
+                    : '',
+            );
             this.outcomeHint.setText('R to run it again  ·  Esc for map select');
         } else {
             this.outcomeText.setText('');
             this.outcomeHint.setText('');
+            this.gradeText.setText('');
+            this.gradeNote.setText('');
         }
+    }
+
+    // What the mission is for, ticked off as it happens.
+    drawObjectives(list) {
+        this.objectiveLabels.forEach((label, i) => {
+            const objective = list[i];
+            if (!objective) {
+                label.setText('');
+                return;
+            }
+            const mark = objective.done ? '✔' : objective.optional ? '○' : '▸';
+            label.setText(`${mark} ${objective.label}`);
+            label.setColor(objective.done ? '#7df07d' : objective.optional ? '#9fb0a5' : '#ffffff');
+        });
     }
 
     // Newest first, fading out as each entry ages.

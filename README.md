@@ -16,6 +16,8 @@ only needed to run the tests.
 
 ![Squad in cover with the roster bar and minimap](docs/squad-ui.png)
 
+![End of a rescue mission, graded](docs/mission-complete.png)
+
 ## Running it
 
 The game is plain static files, but it uses ES modules, so it needs to be served
@@ -89,18 +91,19 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   | Class | Plays like |
   | --- | --- |
   | **Operator** | Carbine, long reach, balanced — the baseline |
-  | **Breacher** | Shotgun, close-range punch, tough, forces doors twice as fast |
-  | **Grenadier** | Four grenades that arc over cover and detonate for area damage; won't throw when a squadmate is in the blast |
+  | **Breacher** | Shotgun, close-range punch, tough, forces doors twice as fast — and carries the breaching charges and flashbangs |
+  | **Grenadier** | Frags that arc over cover and detonate for area damage, plus smoke; won't throw when a squadmate is in the blast |
   | **Medic** | Heals nearby squadmates, and revives downed ones before they bleed out |
-  | **Marksman** | Very long range and heavy single shots, but must be stationary to fire |
+  | **Marksman** | Very long range and heavy single shots, but must be stationary to fire — and its rifle is **suppressed**, so it is the one weapon that does not raise the alarm |
   | **Machine Gunner** | Wide, fast, sustained fire that pins hostiles so they stop shooting back |
 
   The bottom-right card shows the selected unit's Speed / Firepower /
   Survivability / Range, read straight off the same stat table the simulation
-  uses, plus its ability line and remaining grenades.
+  uses, plus its ability line and a pip per item of kit still in the pouch.
 - **You can read your whole squad at once.** The bar along the bottom shows all
-  six — health, hotkey, and what each one is doing (HOLDING, ENGAGING, IN COVER,
-  PINNED, BREACHING, DOWN with its bleed-out clock, KIA). Click a slot to select
+  six — health, rounds in the magazine and spares left, hotkey, and what each one
+  is doing (HOLDING, ENGAGING, IN COVER, PINNED, RELOADING, BLINDED, SUPPRESSING,
+  STACKED, WEAPONS TIGHT, DRY, DOWN with its bleed-out clock, KIA). Click a slot to select
   that operator. Top right is a minimap with the camera's viewport, your squad,
   and hostiles *someone can currently see*; click it to look somewhere. Under it
   runs a short event feed — kills, casualties, doors going in — and a unit that
@@ -180,6 +183,19 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   themselves — though the body will, once somebody finds it. `src/systems/alarm.js`
   reads world state rather than being told about events, so there is no
   bookkeeping to drift out of sync.
+- **Missions, not just maps.** Each map states what it is for, and only one of
+  the three is "kill everyone". Compound is a straight clear. Warehouse is an
+  intel run: reach the office, take what you came for, and get the whole squad
+  back to the extraction zone — killing the garrison is a bonus, not the job.
+  Outpost is a rescue: somebody is being held in the east hut, they follow you
+  once you reach them, and **if they die the mission is lost** — which is what
+  makes a frag through the door the wrong answer and a flashbang the right one.
+  An exfil always waits on every other objective, so it is never a way to skip
+  the mission.
+- **A grade at the end.** Missions are standalone, so the only reason to run one
+  twice is to run it better: the outcome screen scores time, casualties, whether
+  the alarm ever went up and whether you took the bonus, and hands out S through
+  D. Winning and winning well are different things.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
   With orders in the game the pause is a planning phase rather than a freeze
@@ -217,7 +233,11 @@ npm test
   tactical rules directly — a unit on hold fires nothing, ordered suppression
   pins whoever is standing in it, a sprinter does not shoot, a careful marksman
   stays set while moving, a stacked unit waits for the word before the door goes
-  in, and an aimed throw spends exactly one grenade.
+  in, an aimed throw spends exactly one grenade, smoke blocks the view but not
+  the bullet, a flashbang blinds only what could see it, a magazine runs out and
+  costs real time to change, an unsuppressed shot raises the alarm and a
+  suppressed one does not, exactly one reinforcement wave arrives, and a mission
+  ends on its objectives rather than on a body count.
 - `test/smoke.test.mjs` drives the real game in Chromium via Playwright: menu →
   mission → win → back to the menu, with a clean console. It is skipped with a
   notice if Playwright is not installed. On a machine with a global install,
