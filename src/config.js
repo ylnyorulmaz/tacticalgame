@@ -45,6 +45,7 @@ export const UNIT_CLASSES = {
         breachTime: 1400,
         weapon: {
             name: 'Carbine',
+            sound: 'carbine',
             damage: 13,
             cooldown: 220,
             spread: 0.055,
@@ -67,6 +68,7 @@ export const UNIT_CLASSES = {
         breachTime: 650,
         weapon: {
             name: 'Shotgun',
+            sound: 'shotgun',
             damage: 34,
             cooldown: 620,
             spread: 0.13,
@@ -90,6 +92,7 @@ export const UNIT_CLASSES = {
         breachTime: 1500,
         weapon: {
             name: 'Rifle',
+            sound: 'carbine',
             damage: 11,
             cooldown: 260,
             spread: 0.07,
@@ -122,6 +125,7 @@ export const UNIT_CLASSES = {
         breachTime: 1600,
         weapon: {
             name: 'PDW',
+            sound: 'pdw',
             damage: 9,
             cooldown: 240,
             spread: 0.09,
@@ -150,6 +154,7 @@ export const UNIT_CLASSES = {
         breachTime: 1700,
         weapon: {
             name: 'Marksman Rifle',
+            sound: 'dmr',
             damage: 52,
             cooldown: 1500,
             spread: 0.008,
@@ -173,6 +178,7 @@ export const UNIT_CLASSES = {
         breachTime: 1900,
         weapon: {
             name: 'Light MG',
+            sound: 'mg',
             damage: 7,
             cooldown: 95,
             spread: 0.17,
@@ -196,6 +202,7 @@ export const UNIT_CLASSES = {
         breachTime: 1400,
         weapon: {
             name: 'Rifle',
+            sound: 'carbine',
             damage: 10,
             cooldown: 300,
             spread: 0.1,
@@ -218,6 +225,7 @@ export const UNIT_CLASSES = {
         breachTime: 1400,
         weapon: {
             name: 'Sawn-off',
+            sound: 'shotgun',
             damage: 22,
             cooldown: 700,
             spread: 0.15,
@@ -242,6 +250,7 @@ export const UNIT_CLASSES = {
         breachTime: 1400,
         weapon: {
             name: 'Battle Rifle',
+            sound: 'dmr',
             damage: 12,
             cooldown: 260,
             spread: 0.08,

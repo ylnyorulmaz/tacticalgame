@@ -8,6 +8,8 @@ Built with Phaser 3. No build step, no bundler, no npm install.
 
 ![Squad breaching the front door](docs/screenshot.png)
 
+![Squad and hostiles trading fire](docs/firefight.png)
+
 ## Running it
 
 The game is plain static files, but it uses ES modules, so it needs to be served
@@ -39,6 +41,7 @@ automatic offline fallback, so the game still boots without a network.
 | `Esc` | Clear selection |
 | `W A S D` / arrows | Pan the camera |
 | Middle-drag / wheel | Pan / zoom |
+| `M` | Mute / unmute |
 | `R` | Restart the mission |
 
 ## What is in the mission
@@ -83,9 +86,24 @@ automatic offline fallback, so the game still boots without a network.
   fire pins them in place.
 - **Combat.** Fire is automatic on anything visible and in range. Bullets are
   simulated tracers that stop on walls, wrecks and sandbags. At zero HP a unit
-  drops its weapon and is marked with a black X.
+  drops its weapon — the same silhouette it was carrying — and is marked with a
+  black X.
+- **Weapons you can read at a glance.** Each weapon is built from parts in
+  `src/render/weapons.js`: barrel, receiver, stock and furniture, plus a drum on
+  the launcher, a scope on the marksman rifle and splayed bipod legs on the
+  machine gun. Firing kicks the gun back on its own axis, throws a muzzle flash
+  shaped to the weapon — a wide bloom for buckshot, a long lance for the marksman
+  — ejects brass, and leaves a wisp of smoke. Rounds strike walls in dust and
+  sparks; grenades trail smoke and burst into a shockwave ring and debris.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
+- **Sound, synthesised on the fly.** Each weapon has its own report, and there are
+  effects for grenades and their detonation, rounds striking walls and bodies, a
+  door going in, a squadmate going down or being revived, and the mission ending.
+  Nothing is loaded from disk: every sound is built from filtered noise and swept
+  oscillators through the Web Audio API, so there are no audio files to ship. The
+  camera is the ear — sounds fall off with distance from the middle of the view
+  and pan to the side they happened on. `M` mutes.
 
 ## Layout
 
@@ -101,9 +119,12 @@ src/systems/vision.js   line of sight, visibility polygons, fog layers
 src/systems/units.js    unit state, movement, breaching, damage, downed
 src/systems/combat.js   weapons, tracers, grenades, suppression
 src/systems/support.js  medic healing and revives
+src/systems/audio.js    procedural sound: synth engine and the sound table
 src/systems/ai.js       hostile state machine
 src/systems/input.js    selection, orders, camera
+src/systems/effects.js  particles: brass, smoke, sparks, debris, shockwaves
 src/render/terrain.js   baked scenery: grass, grid, trees, building, props
+src/render/weapons.js   weapon part shapes, muzzle flashes, recoil placement
 src/render/entities.js  units, corpses, doors, tracers, order lines
 src/render/hud.js       unit card, mission status, pause and outcome overlays
 ```

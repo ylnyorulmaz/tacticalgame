@@ -10,6 +10,8 @@ import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
+import { AudioEngine } from '../systems/audio.js';
+import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
 import { buildTerrain } from '../render/terrain.js';
 import { EntityRenderer } from '../render/entities.js';
@@ -25,6 +27,7 @@ export class GameScene extends Phaser.Scene {
 
         this.paused = false;
         this.outcome = null;
+        this.outcomeAnnounced = false;
         this.level = LEVEL;
 
         buildTerrain(this, LEVEL, 0);
@@ -34,6 +37,13 @@ export class GameScene extends Phaser.Scene {
         this.fog = new FogRenderer(this, 20);
         this.entities = new EntityRenderer(this);
         this.entities.drawDoors(LEVEL);
+        // Survives restarts: the scene is rebuilt, but the AudioContext and the
+        // player's mute choice should not be.
+        const wasMuted = this.audio ? this.audio.muted : false;
+        if (this.audio) this.audio.dispose();
+        this.audio = new AudioEngine(this);
+        this.audio.setMuted(wasMuted);
+        this.effects = new EffectSystem();
 
         this.squad = LEVEL.squad.map((spec) => new Unit(spec));
         this.hostiles = LEVEL.hostiles.map((spec) => {
@@ -55,6 +65,7 @@ export class GameScene extends Phaser.Scene {
             blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(LEVEL.doors, x, y, 2),
             closedDoorAt: (x, y) => doorAtPoint(LEVEL.doors, x, y, 10),
             openDoor: (door) => this.openDoor(door),
+            onBreachStart: (unit) => this.audio.play('breachStart', unit.x, unit.y),
             repath: (unit, point) => {
                 const path = this.nav.findPath(unit.x, unit.y, point.x, point.y);
                 unit.setPath(path);
@@ -76,6 +87,7 @@ export class GameScene extends Phaser.Scene {
     openDoor(door) {
         if (door.open) return;
         door.open = true;
+        this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
         this.nav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
@@ -85,6 +97,7 @@ export class GameScene extends Phaser.Scene {
     togglePause() {
         if (this.outcome) return;
         this.paused = !this.paused;
+        this.audio.play(this.paused ? 'pause' : 'unpause');
     }
 
     restartMission() {
@@ -103,11 +116,13 @@ export class GameScene extends Phaser.Scene {
         if (alive.length === 0) return;
         const current = this.selected.length === 1 ? alive.indexOf(this.selected[0]) : -1;
         this.selectUnits([alive[(current + 1) % alive.length]]);
+        this.audio.play('select');
     }
 
     issueMoveOrder(x, y, queue) {
         if (this.outcome || this.selected.length === 0) return;
         const targets = formationTargets(x, y, this.selected.length);
+        let ordered = 0;
 
         this.selected.forEach((unit, i) => {
             if (!unit.alive) return;
@@ -132,7 +147,10 @@ export class GameScene extends Phaser.Scene {
                 unit.breaching = null;
                 unit.setPath(path);
             }
+            ordered++;
         });
+
+        if (ordered > 0) this.audio.play('order');
     }
 
     update(time, delta) {
@@ -144,8 +162,20 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.update(dt, this.ctx);
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             this.combat.update(dt, this.units, time);
-            updateSupport(this.units, dt);
+            updateSupport(this.units, dt, this.combat.events);
+            this.effects.update(dt, this.combat.projectiles);
             this.checkOutcome();
+        }
+
+        // One event stream, two consumers: the audio engine reads `type`, the
+        // particle system reads `kind` and the extras that come with it. Drained
+        // even while paused, so the last shots before a pause are not swallowed.
+        if (this.combat.events.length > 0) {
+            for (const event of this.combat.events) {
+                this.audio.play(event.type, event.x, event.y);
+                this.effects.handle(event);
+            }
+            this.combat.events.length = 0;
         }
 
         // Selection can outlive its units.
@@ -162,6 +192,7 @@ export class GameScene extends Phaser.Scene {
             units: this.units,
             projectiles: this.combat.projectiles,
             explosions: this.combat.explosions,
+            effects: this.effects,
             time,
             vision: this.vision,
             friendlies: this.squad,
@@ -173,6 +204,10 @@ export class GameScene extends Phaser.Scene {
         // A downed squadmate is not a lost one until it bleeds out.
         if (this.hostiles.every((u) => !u.alive)) this.outcome = 'win';
         else if (this.squad.every((u) => !u.alive && !u.downed)) this.outcome = 'lose';
+        if (this.outcome && !this.outcomeAnnounced) {
+            this.outcomeAnnounced = true;
+            this.audio.play(this.outcome);
+        }
     }
 
     getHudState() {
@@ -187,6 +222,7 @@ export class GameScene extends Phaser.Scene {
             squadDown: this.squad.filter((u) => u.downed).length,
             paused: this.paused,
             outcome: this.outcome,
+            muted: this.audio.muted || !this.audio.available,
         };
     }
 }

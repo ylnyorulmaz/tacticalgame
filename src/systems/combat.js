@@ -16,6 +16,9 @@ export class CombatSystem {
         this.projectiles = [];
         this.explosions = [];
         this.noises = [];
+        // Sound events for the frame, drained by the scene. Combat stays unaware
+        // of the audio engine; it just reports what happened and where.
+        this.events = [];
         this.blockers = solidRects(level);
         this.arcs = sandbagArcs(level);
     }
@@ -123,6 +126,16 @@ export class CombatSystem {
             maxDist: Math.hypot(target.x - muzzleX, target.y - muzzleY),
         });
 
+        this.events.push({
+            type: 'grenadeThrow',
+            kind: 'grenade',
+            x: muzzleX,
+            y: muzzleY,
+            angle,
+            cls: unit.cls,
+        });
+        unit.recoil = 1;
+        unit.muzzleFlash = 60;
         unit.grenadesLeft -= 1;
         unit.grenadeTimer = grenade.cooldown;
         unit.fireTimer = Math.max(unit.fireTimer, 700);
@@ -153,8 +166,17 @@ export class CombatSystem {
             });
         }
 
+        this.events.push({
+            type: weapon.sound || 'carbine',
+            kind: 'shot',
+            x: muzzleX,
+            y: muzzleY,
+            angle: unit.facing,
+            cls: unit.cls,
+        });
         unit.fireTimer = weapon.cooldown;
-        unit.muzzleFlash = 70;
+        unit.muzzleFlash = 95;
+        unit.recoil = 1;
         unit.burstLeft -= 1;
         if (unit.burstLeft <= 0) {
             unit.burstLeft = weapon.burst;
@@ -192,7 +214,17 @@ export class CombatSystem {
                 }
 
                 if (bullet.travelled > bullet.maxDist) { dead = true; break; }
-                if (this.hitsGeometry(bullet.x, bullet.y)) { dead = true; break; }
+                if (this.hitsGeometry(bullet.x, bullet.y)) {
+                    this.events.push({
+                        type: 'impact',
+                        kind: 'impact',
+                        x: bullet.x,
+                        y: bullet.y,
+                        angle: Math.atan2(bullet.vy, bullet.vx),
+                    });
+                    dead = true;
+                    break;
+                }
 
                 for (const unit of units) {
                     if (!unit.alive || unit.team === bullet.team) continue;
@@ -201,7 +233,16 @@ export class CombatSystem {
                     const distSq = dx * dx + dy * dy;
                     if (distSq <= unit.radius * unit.radius) {
                         if (bullet.suppression) unit.addSuppression(bullet.suppression);
+                        const standing = unit.alive;
                         unit.takeDamage(bullet.damage);
+                        this.events.push({
+                            type: standing && !unit.alive ? 'down' : 'hit',
+                            kind: 'hit',
+                            x: unit.x,
+                            y: unit.y,
+                            angle: Math.atan2(bullet.vy, bullet.vx),
+                            team: unit.team,
+                        });
                         dead = true;
                         break;
                     }
@@ -234,10 +275,19 @@ export class CombatSystem {
 
             const falloff = 1 - dist / grenade.radius;
             const scale = unit.team === grenade.team ? BLAST_FRIENDLY_SCALE : 1;
+            const standing = unit.alive;
             unit.takeDamage(grenade.damage * falloff * scale);
+            if (standing && !unit.alive) this.events.push({ type: 'down', x: unit.x, y: unit.y });
             unit.addSuppression(SUPPRESSION.threshold * falloff);
         }
         this.explosions.push({ x: grenade.x, y: grenade.y, radius: grenade.radius, ttl: EXPLOSION_TTL });
+        this.events.push({
+            type: 'explosion',
+            kind: 'explosion',
+            x: grenade.x,
+            y: grenade.y,
+            radius: grenade.radius,
+        });
     }
 
     hitsGeometry(x, y) {

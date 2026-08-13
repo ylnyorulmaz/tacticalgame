@@ -4,7 +4,7 @@
 
 import { DOWNED } from '../config.js';
 
-export function updateSupport(units, dt) {
+export function updateSupport(units, dt, events = []) {
     for (const medic of units) {
         if (!medic.alive || !medic.stats.support) continue;
         const support = medic.stats.support;
@@ -19,6 +19,7 @@ export function updateSupport(units, dt) {
             if (casualty.reviveProgress >= support.reviveTime) {
                 casualty.revive(support.reviveHp ?? DOWNED.reviveHp);
                 medic.reviving = null;
+                events.push({ type: 'revive', x: casualty.x, y: casualty.y });
             }
             continue;
         }

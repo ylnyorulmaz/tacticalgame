@@ -20,6 +20,11 @@ export class InputController {
 
         scene.input.mouse.disableContextMenu();
 
+        // Browsers hold the audio context closed until the page is interacted
+        // with, so the first click or key is also what turns the sound on.
+        scene.input.on('pointerdown', () => scene.audio.resume());
+        scene.input.keyboard.on('keydown', () => scene.audio.resume());
+
         scene.input.on('pointerdown', (pointer) => this.onPointerDown(pointer));
         scene.input.on('pointerup', (pointer) => this.onPointerUp(pointer));
         scene.input.on('pointermove', (pointer) => this.onPointerMove(pointer));
@@ -36,18 +41,19 @@ export class InputController {
         });
         keys.on('keydown-ESC', () => scene.selectUnits([]));
         keys.on('keydown-R', () => scene.restartMission());
+        keys.on('keydown-M', () => scene.audio.toggleMute());
         const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];
         for (let i = 1; i <= numberKeys.length; i++) {
             keys.on(`keydown-${numberKeys[i - 1]}`, (event) => {
                 const unit = scene.squad[i - 1];
                 if (!unit || !unit.alive) return;
-                scene.selectUnits(event.shiftKey ? [...scene.selected, unit] : [unit]);
+                this.select(event.shiftKey ? [...scene.selected, unit] : [unit]);
             });
         }
         keys.on('keydown-A', (event) => {
             if (!event.ctrlKey && !event.metaKey) return;
             event.preventDefault();
-            scene.selectUnits(scene.squad.filter((u) => u.alive));
+            this.select(scene.squad.filter((u) => u.alive));
         });
 
         this.panKeys = keys.addKeys({
@@ -60,6 +66,13 @@ export class InputController {
             left2: Phaser.Input.Keyboard.KeyCodes.LEFT,
             right2: Phaser.Input.Keyboard.KeyCodes.RIGHT,
         });
+    }
+
+    // Selection made by the player, as opposed to the housekeeping the scene does
+    // when a selected unit goes down — only the former should click.
+    select(units) {
+        this.scene.selectUnits(units);
+        if (this.scene.selected.length > 0) this.scene.audio.play('select');
     }
 
     onPointerDown(pointer) {
@@ -105,7 +118,7 @@ export class InputController {
             const unit = this.scene.squad.find(
                 (u) => u.alive && Math.hypot(u.x - end.x, u.y - end.y) <= u.radius + 8,
             );
-            this.scene.selectUnits(unit ? [unit] : []);
+            this.select(unit ? [unit] : []);
             return;
         }
         this.dragging = false;
@@ -117,7 +130,7 @@ export class InputController {
         const inBox = this.scene.squad.filter(
             (u) => u.alive && u.x >= minX && u.x <= maxX && u.y >= minY && u.y <= maxY,
         );
-        this.scene.selectUnits(inBox);
+        this.select(inBox);
     }
 
     drawBox(a, b) {
