@@ -264,6 +264,10 @@ src/systems/units.js    unit state, movement, breaching, damage, downed
 src/systems/combat.js   weapons, tracers, grenades, suppression
 src/systems/support.js  medic healing and revives
 src/systems/cover.js    how well a unit is shielded from a given threat
+src/systems/orders.js   the order record and every verb that writes it
+src/systems/alarm.js    the garrison's alert level and reinforcements
+src/systems/objectives.js  what the mission is for, and the end-of-run grade
+src/systems/settings.js localStorage-backed player settings (the ammo switch)
 src/systems/audio.js    procedural sound: synth engine and the sound table
 src/systems/ai.js       hostile state machine
 src/systems/input.js    selection, orders, camera
@@ -274,10 +278,20 @@ src/render/entities.js  units, corpses, doors, tracers, order lines
 src/render/preview.js   map thumbnails drawn from map data
 src/render/roster.js    the squad bar
 src/render/minimap.js   minimap with camera rect and live markers
-src/render/hud.js       unit card, mission status, event feed, overlays
-test/                   map, audio and browser smoke suites + runner
+src/render/palette.js   the order palette along the top
+src/render/hud.js       unit card, status, objectives, event feed, overlays
+test/                   map, audio, tactics and browser smoke suites + runner
 ```
 
 Two knobs worth knowing about: `src/config.js` holds every gameplay number in one
 place, and `?renderer=canvas` forces Phaser's canvas backend (the fog has a
 separate code path there, since inverted geometry masks are WebGL-only).
+
+One performance note, measured rather than guessed: smoke is the only thing here
+that costs anything noticeable. Each cloud adds a twelve-sided occluder that
+every sight test and every fog ray has to consider, and three clouds on screen at
+once cost roughly a fifth of the frame in a software renderer (11.8 → 9.4 fps on
+Outpost under swiftshader; hardware rendering has far more headroom). Clouds last
+thirteen seconds and the squad carries five between them, so it is a bounded
+cost — but it is why the dynamic occluders are kept in their own list and only
+consulted by the tests that are about *seeing*.

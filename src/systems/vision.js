@@ -44,7 +44,10 @@ export class VisionSystem {
                 const angle = (i / CLOUD_SIDES) * Math.PI * 2;
                 const x = cloud.x + Math.cos(angle) * cloud.radius;
                 const y = cloud.y + Math.sin(angle) * cloud.radius;
-                segments.push(measured({ ax: px, ay: py, bx: x, by: y }));
+                // `soft` keeps the polygon builder from spending three rays on
+                // each of these corners: a cloud has no crisp silhouette to
+                // catch, so the corner ray alone is enough.
+                segments.push(measured({ ax: px, ay: py, bx: x, by: y, soft: true }));
                 px = x;
                 py = y;
             }
@@ -61,18 +64,19 @@ export class VisionSystem {
         this.segments = segments;
     }
 
+    // Walked once per unit per frame, so it iterates both lists rather than
+    // concatenating them — copying the whole static soup here was costing more
+    // than the smoke it was copying it for.
     segmentsNear(x, y, radius) {
         const near = [];
-        for (const seg of this.allSegments()) {
-            if (seg.maxX < x - radius || seg.minX > x + radius) continue;
-            if (seg.maxY < y - radius || seg.minY > y + radius) continue;
-            near.push(seg);
+        for (const list of [this.segments, this.dynamic]) {
+            for (const seg of list) {
+                if (seg.maxX < x - radius || seg.minX > x + radius) continue;
+                if (seg.maxY < y - radius || seg.minY > y + radius) continue;
+                near.push(seg);
+            }
         }
         return near;
-    }
-
-    allSegments() {
-        return this.dynamic.length === 0 ? this.segments : [...this.segments, ...this.dynamic];
     }
 
     // True when nothing *solid* stands between the two points. This is the
@@ -127,7 +131,8 @@ export class VisionSystem {
                 const dy = py - y;
                 if (dx * dx + dy * dy > radius * radius) continue;
                 const base = Math.atan2(dy, dx);
-                angles.push(base - FOG.epsilon, base, base + FOG.epsilon);
+                if (seg.soft) angles.push(base);
+                else angles.push(base - FOG.epsilon, base, base + FOG.epsilon);
             }
         }
         for (let i = 0; i < FOG.rayCount; i++) {
