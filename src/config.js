@@ -329,6 +329,27 @@ export const UNIT_CLASSES = {
     },
 };
 
+// What the ground itself does. Every cell of the nav grid carries one of these,
+// so where you walk costs time, makes noise, and (from the next block down)
+// hides you or lets you see over things.
+export const SURFACES = {
+    plain: { id: 0, cost: 1, speed: 1, noise: 0 },
+    mud: { id: 1, cost: 1.9, speed: 0.55, noise: 0 },
+    gravel: { id: 2, cost: 1, speed: 0.95, noise: 280 },
+    rubble: { id: 3, cost: 1.7, speed: 0.6, noise: 320, cover: 0.5 },
+    grass: { id: 4, cost: 1.15, speed: 0.85, noise: 0, conceals: true },
+    high: { id: 5, cost: 1.25, speed: 0.9, noise: 0, elevated: true },
+};
+
+// Indexed by the `id` above, so the nav grid can store one byte per cell and
+// still answer "how fast, how loud, how expensive" without a lookup by name.
+export const SURFACE_BY_ID = Object.values(SURFACES).sort((a, b) => a.id - b.id);
+
+export const FOOTSTEPS = {
+    interval: 420,          // ms between footfalls loud enough to report
+    paceScale: { normal: 1, sprint: 1.45, careful: 0 },
+};
+
 // Throwables and door charges. Smoke is the odd one out: it stops sight without
 // stopping a bullet, which is exactly what makes it worth carrying — you can
 // cross open ground behind it, and so can they.

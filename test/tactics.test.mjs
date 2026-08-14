@@ -15,7 +15,7 @@ import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
 import { AlarmSystem, CALM, ALARMED } from '../src/systems/alarm.js';
 import { ObjectiveSystem, rateMission } from '../src/systems/objectives.js';
-import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM } from '../src/config.js';
+import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM, SURFACES } from '../src/config.js';
 
 export const name = 'tactics';
 
@@ -59,9 +59,14 @@ function world(mapId = 'compound') {
 
     // Classified by team, not by "not friendly": a civilian belongs to neither
     // side, exactly as GameScene keeps them out of both lists.
-    w.add = (cls, x, y, facing = 0) => {
+    //
+    // `inert` adds a body that the simulation can shoot, blast and step around
+    // but that never thinks — useful when a case is about a weapon or a tool and
+    // a reacting hostile would go and do something else halfway through.
+    w.add = (cls, x, y, facing = 0, { inert = false } = {}) => {
         const unit = new Unit({ cls, x, y, facing });
         units.push(unit);
+        if (inert) return unit;
         if (unit.team === 'friendly') w.friendlies.push(unit);
         else if (unit.team === 'hostile') w.hostiles.push(unit);
         return unit;
@@ -71,6 +76,7 @@ function world(mapId = 'compound') {
     w.run = (ms) => {
         for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
             w.now += STEP;
+            w.ctx.now = w.now;
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
@@ -90,6 +96,7 @@ function world(mapId = 'compound') {
         let shots = 0;
         for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
             w.now += STEP;
+            w.ctx.now = w.now;
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
@@ -126,6 +133,56 @@ export function run(t) {
     alarm(t);
     objectives(t);
     rating(t);
+    surfaces(t);
+}
+
+// The ground itself: slow where it should be slow, loud where it should be
+// loud, and expensive enough that A* routes around the worst of it.
+function surfaces(t) {
+    const w = world('outpost');
+    const mud = w.level.terrain.find((p) => p.kind === 'mud');
+    const gravel = w.level.terrain.find((p) => p.kind === 'gravel');
+    t.ok(!!mud && !!gravel, 'the outpost has mud and gravel on it');
+    t.equal(w.nav.surfaceAtWorld(mud.x + mud.w / 2, mud.y + mud.h / 2).id, SURFACES.mud.id,
+        'the nav grid knows what the ground is made of');
+
+    // Same distance, different ground: mud is measurably slower.
+    const inMud = w.add('operator', mud.x + 30, mud.y + mud.h / 2);
+    const onGrass = w.add('operator', mud.x + 30, mud.y - 200);
+    inMud.setPath([{ x: mud.x + mud.w - 30, y: mud.y + mud.h / 2 }]);
+    onGrass.setPath([{ x: mud.x + mud.w - 30, y: mud.y - 200 }]);
+    const mudFrom = inMud.x;
+    const grassFrom = onGrass.x;
+    w.run(1000);
+    t.ok(
+        inMud.x - mudFrom < (onGrass.x - grassFrom) * 0.8,
+        `mud slows a unit down (${Math.round(inMud.x - mudFrom)} vs ${Math.round(onGrass.x - grassFrom)} px)`,
+    );
+
+    // A* pays the surface cost, so a route prefers to go round the mud.
+    const path = w.nav.findPath(mud.x - 120, mud.y + mud.h / 2, mud.x + mud.w + 120, mud.y + mud.h / 2);
+    t.ok(!!path, 'a route across the mud exists');
+    const throughMud = path.filter(
+        (p) => p.x >= mud.x && p.x <= mud.x + mud.w && p.y >= mud.y && p.y <= mud.y + mud.h,
+    ).length;
+    t.ok(throughMud <= 1, `and it prefers to go around it (${throughMud} waypoints inside)`);
+
+    // Gravel gives you away; creeping over it does not.
+    const noisy = world('outpost');
+    const walker = noisy.add('operator', gravel.x + 40, gravel.y + gravel.h / 2);
+    walker.setPath([{ x: gravel.x + gravel.w - 40, y: gravel.y + gravel.h / 2 }]);
+    noisy.run(1500);
+    const heard = noisy.ctx.noises.filter((n) => !n.loud).length;
+    t.ok(heard > 0, 'walking on gravel makes a noise somebody could hear');
+
+    const quiet = world('outpost');
+    const creeper = quiet.add('operator', gravel.x + 40, gravel.y + gravel.h / 2);
+    orders.cyclePace([creeper]);
+    orders.cyclePace([creeper]);
+    t.equal(creeper.order.pace, 'careful', 'the creeper is on a careful pace');
+    creeper.setPath([{ x: gravel.x + gravel.w - 40, y: gravel.y + gravel.h / 2 }]);
+    quiet.run(1500);
+    t.equal(quiet.ctx.noises.length, 0, 'and creeping over the same ground makes none');
 }
 
 // What the mission is for. Two of the three maps end on something other than
@@ -312,8 +369,10 @@ function breachingCharge(t) {
     const charges = breacher.kit.charge;
     t.ok(charges > 0, 'the breacher deploys with charges');
 
-    // Standing right behind the door, on the inside.
-    const inside = w.add('hostile', door.x + door.w / 2, door.y - 60);
+    // Standing right behind the door, on the inside — and inert, because a
+    // thinking one hears the breacher crossing the gravel outside and opens the
+    // door itself, which is correct behaviour but not what this case is about.
+    const inside = w.add('hostile', door.x + door.w / 2, door.y - 60, 0, { inert: true });
     const hp = inside.hp;
 
     orders.stackOn([breacher], door, w.ctx);

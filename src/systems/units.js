@@ -1,7 +1,7 @@
 // Unit model: stats, movement along a smoothed path, door breaching, damage and
 // death. Rendering lives in render/entities.js — a unit here is plain state.
 
-import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS } from '../config.js';
+import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS, SURFACES, FOOTSTEPS } from '../config.js';
 import { rectContains } from '../level.js';
 import { makeOrder, paceScale, staysSet } from './orders.js';
 import { settings } from './settings.js';
@@ -66,6 +66,7 @@ export class Unit {
         // How long this unit has been standing still (the marksman needs to be
         // set before firing) and how much incoming fire is pinning it down.
         this.stationaryFor = 0;
+        this.stepTimer = 0;      // counts down to the next audible footfall
         this.suppression = 0;
         this.pinned = false;
         this.inCover = 0;        // 0..1, maintained by systems/cover.js
@@ -287,13 +288,40 @@ export class Unit {
         }
 
         this.travelAngle = Math.atan2(dy, dx);
-        const step = (this.stats.speed * paceScale(this) * dt) / 1000;
+        // Ground under this unit right now: mud is slow, gravel is loud.
+        const surface = ctx.nav ? ctx.nav.surfaceAtWorld(this.x, this.y) : SURFACES.plain;
+        this.reportFootsteps(dt, surface, ctx);
+        const step = (this.stats.speed * paceScale(this) * surface.speed * dt) / 1000;
         const nx = this.x + (dx / dist) * step;
         const ny = this.y + (dy / dist) * step;
 
         // Move each axis on its own so units slide along walls instead of sticking.
         if (!ctx.blocked(nx, this.y)) this.x = nx;
         if (!ctx.blocked(this.x, ny)) this.y = ny;
+    }
+
+    // Loud ground gives you away. Footfalls go into the same noise list gunfire
+    // uses, but marked quiet: they send a hostile looking, they do not tell it
+    // what it is looking for. Creeping makes none at all, which is finally a
+    // reason to order a careful pace rather than just a cost.
+    reportFootsteps(dt, surface, ctx) {
+        if (!surface.noise || !ctx.noises) return;
+        const paceNoise = FOOTSTEPS.paceScale[this.order.pace] ?? 1;
+        if (paceNoise <= 0) {
+            this.stepTimer = FOOTSTEPS.interval;
+            return;
+        }
+        this.stepTimer -= dt;
+        if (this.stepTimer > 0) return;
+        this.stepTimer = FOOTSTEPS.interval;
+        ctx.noises.push({
+            x: this.x,
+            y: this.y,
+            team: this.team,
+            time: ctx.now ?? 0,
+            loud: false,
+            radius: surface.noise * paceNoise,
+        });
     }
 
     // Gentle shove so squadmates spread out instead of stacking on one pixel.

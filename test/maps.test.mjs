@@ -7,7 +7,7 @@
 import { MAPS, buildMap } from '../src/maps/index.js';
 import { NavGrid } from '../src/systems/nav.js';
 import { staticSolidRects, rectContains } from '../src/level.js';
-import { WORLD } from '../src/config.js';
+import { WORLD, SURFACES } from '../src/config.js';
 
 export const name = 'maps';
 
@@ -68,6 +68,38 @@ export function run(t) {
         }
         t.ok((level.reinforce || []).length > 0, `${label}: has reinforcement entry points`);
         t.empty(badEntries, `${label}: reinforcements can actually walk in`);
+
+        // Terrain that sits off the map, or entirely inside a wall, is data
+        // nobody will ever walk on.
+        const badTerrain = [];
+        for (const patch of level.terrain || []) {
+            const where = `${patch.kind} at ${patch.x},${patch.y}`;
+            if (!SURFACES[patch.kind]) badTerrain.push(`${where} is not a known surface`);
+            else if (patch.w <= 0 || patch.h <= 0) badTerrain.push(`${where} has no area`);
+            else if (patch.x < 0 || patch.y < 0
+                || patch.x + patch.w > WORLD.width || patch.y + patch.h > WORLD.height) {
+                badTerrain.push(`${where} runs off the map`);
+            } else if (!nav.findPath(from.x, from.y, patch.x + patch.w / 2, patch.y + patch.h / 2)) {
+                badTerrain.push(`${where} cannot be reached`);
+            }
+        }
+        t.empty(badTerrain, `${label}: terrain patches are on the map and walkable`);
+
+        // A road is a promise about where traffic comes from, so its ends should
+        // be somewhere a unit could actually be.
+        const badRoads = [];
+        for (const road of level.roads || []) {
+            if (!road.points || road.points.length < 2) {
+                badRoads.push('a road with fewer than two points');
+                continue;
+            }
+            for (const point of road.points) {
+                if (point.x < 0 || point.y < 0 || point.x > WORLD.width || point.y > WORLD.height) {
+                    badRoads.push(`road point ${point.x},${point.y} is off the map`);
+                }
+            }
+        }
+        t.empty(badRoads, `${label}: roads stay on the map`);
 
         const badRoutes = [];
         for (const hostile of level.hostiles) {

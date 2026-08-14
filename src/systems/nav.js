@@ -3,8 +3,8 @@
 // staircases. Closed doors stay traversable at a high cost — that is how a unit
 // is able to path "through" a shut door and then breach it on arrival.
 
-import { WORLD, UNIT_RADIUS } from '../config.js';
-import { staticSolidRects, sandbagArcs, pointInSandbag } from '../level.js';
+import { WORLD, UNIT_RADIUS, SURFACES, SURFACE_BY_ID } from '../config.js';
+import { staticSolidRects, sandbagArcs, pointInSandbag, rectContains } from '../level.js';
 
 export const CELL = 20;
 export const COLS = Math.ceil(WORLD.width / CELL);
@@ -18,9 +18,20 @@ const DOOR_COST = 6;
 const SQRT2 = Math.SQRT2;
 
 export class NavGrid {
-    constructor(level) {
+    // `radius` is the body being routed. Infantry use the default; vehicles get
+    // their own wider grid, which is what keeps a tank out of a doorway it would
+    // otherwise happily path through.
+    constructor(level, options = {}) {
         this.level = level;
+        this.radius = options.radius ?? UNIT_RADIUS;
+        // Doors are a passable-but-expensive cell for infantry (walk up, breach,
+        // walk through) and simply a wall for anything too wide to fit.
+        this.doorsPassable = options.doorsPassable ?? true;
         this.cells = new Uint8Array(COLS * ROWS);
+        // What each cell is made of, parallel to `cells`: passability and
+        // surface are different questions and keeping them apart means A* costs
+        // and unit speed can read one without decoding the other.
+        this.surface = new Uint8Array(COLS * ROWS);
         this.g = new Float32Array(COLS * ROWS);
         this.came = new Int32Array(COLS * ROWS);
         this.state = new Uint8Array(COLS * ROWS);
@@ -39,6 +50,7 @@ export class NavGrid {
 
     rebuild() {
         this.cells.fill(FREE);
+        this.markSurfaces();
 
         const mark = (rect, pad, value) => {
             const minX = Math.max(0, Math.floor((rect.x - pad) / CELL));
@@ -53,7 +65,7 @@ export class NavGrid {
         // Walls and wrecks, inflated by the unit radius so a body never ends up
         // clipping a corner it "legally" pathed around. Doors are handled below:
         // inflating them here would seal off their own approach.
-        for (const rect of staticSolidRects(this.level)) mark(rect, UNIT_RADIUS, BLOCKED);
+        for (const rect of staticSolidRects(this.level)) mark(rect, this.radius, BLOCKED);
 
         for (const arc of sandbagArcs(this.level)) {
             const minX = Math.max(0, Math.floor((arc.x - arc.radius - 30) / CELL));
@@ -64,7 +76,7 @@ export class NavGrid {
                 for (let cx = minX; cx <= maxX; cx++) {
                     const wx = cx * CELL + CELL / 2;
                     const wy = cy * CELL + CELL / 2;
-                    if (pointInSandbag(arc, wx, wy, UNIT_RADIUS)) {
+                    if (pointInSandbag(arc, wx, wy, this.radius)) {
                         this.cells[this.index(cx, cy)] = BLOCKED;
                     }
                 }
@@ -73,7 +85,9 @@ export class NavGrid {
 
         // Doorways last: their own footprint is passable-but-expensive when shut
         // and plain floor when open, overriding the wall inflation in the gap.
+        // A body too wide for the gap gets no such exception.
         for (const door of this.level.doors) {
+            if (!this.doorsPassable) continue;
             mark(door, 0, door.open ? FREE : DOOR);
         }
 
@@ -86,6 +100,33 @@ export class NavGrid {
             this.cells[this.index(0, cy)] = BLOCKED;
             this.cells[this.index(COLS - 1, cy)] = BLOCKED;
         }
+    }
+
+    // Terrain patches are stored as rectangles but painted per cell, so every
+    // later question — how fast, how loud, can I see over it — is a single
+    // array read rather than a walk over the patch list.
+    markSurfaces() {
+        this.surface.fill(SURFACES.plain.id);
+        for (const patch of this.level.terrain || []) {
+            const kind = SURFACES[patch.kind];
+            if (!kind || kind === SURFACES.plain) continue;
+            const minX = Math.max(0, Math.floor(patch.x / CELL));
+            const maxX = Math.min(COLS - 1, Math.floor((patch.x + patch.w) / CELL));
+            const minY = Math.max(0, Math.floor(patch.y / CELL));
+            const maxY = Math.min(ROWS - 1, Math.floor((patch.y + patch.h) / CELL));
+            for (let cy = minY; cy <= maxY; cy++) {
+                for (let cx = minX; cx <= maxX; cx++) this.surface[this.index(cx, cy)] = kind.id;
+            }
+        }
+    }
+
+    surfaceAt(cx, cy) {
+        return SURFACE_BY_ID[this.surface[this.index(cx, cy)]] || SURFACES.plain;
+    }
+
+    surfaceAtWorld(x, y) {
+        const { cx, cy } = this.cellAtWorld(x, y);
+        return this.surfaceAt(cx, cy);
     }
 
     cellAtWorld(x, y) {
@@ -166,7 +207,11 @@ export class NavGrid {
                         if (this.cells[this.index(cx + dx, cy)] === BLOCKED) continue;
                         if (this.cells[this.index(cx, cy + dy)] === BLOCKED) continue;
                     }
-                    const step = (dx !== 0 && dy !== 0 ? SQRT2 : 1) * (value === DOOR ? DOOR_COST : 1);
+                    // Distance × what it costs to cross this cell. A route over
+                    // the road beats the same length through mud, which is what
+                    // makes surfaces show up in the paths units actually take.
+                    const terrain = value === DOOR ? DOOR_COST : SURFACE_BY_ID[this.surface[nIdx]].cost;
+                    const step = (dx !== 0 && dy !== 0 ? SQRT2 : 1) * terrain;
                     const tentative = this.g[current] + step;
                     const seen = this.stamp[nIdx] === id;
                     if (seen && this.state[nIdx] === 2) continue;
@@ -229,7 +274,9 @@ export class NavGrid {
         return out;
     }
 
-    // Sampled walk test. Door cells count as obstacles here on purpose.
+    // Sampled walk test. Door cells count as obstacles here on purpose; surfaced
+    // ground does not — mud is slow, not impassable, and refusing to smooth over
+    // it would leave units walking staircases across every soft patch.
     clearLine(a, b) {
         const dist = Math.hypot(b.x - a.x, b.y - a.y);
         const steps = Math.ceil(dist / (CELL * 0.5));

@@ -293,6 +293,9 @@ export class GameScene extends Phaser.Scene {
     update(time, delta) {
         const dt = Math.min(delta, 50);
         this.inputCtl.update(dt);
+        // Systems that report noises stamp them with this, and combat prunes
+        // against the same clock.
+        this.ctx.now = time;
 
         if (!this.paused && !this.outcome) {
             for (const hostile of this.hostiles) updateHostile(hostile, dt, this.ctx);
