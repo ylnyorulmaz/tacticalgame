@@ -46,10 +46,11 @@ export class GameScene extends Phaser.Scene {
         this.level = buildMap(this.mapId);
         const level = this.level;
 
-        buildGround(this, level, 0);
-        // Cover and the marks a fight leaves are their own layers: one gets
-        // re-baked when something is blown apart, the other only accumulates.
-        this.decals = new DecalLayer(this, 4);
+        // Three things live on the ground. The bake never changes, so the marks
+        // a fight leaves are stamped straight into it; cover gets its own layer
+        // because it can be blown apart and has to be re-drawn without them.
+        const ground = buildGround(this, level, 0);
+        this.decals = new DecalLayer(this, ground);
         this.props = new PropLayer(this, level, 5);
         this.vision = new VisionSystem(level);
         this.nav = new NavGrid(level);

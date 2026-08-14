@@ -82,11 +82,13 @@ export class PropLayer {
 // debris of whatever used to be cover. Drawn once and kept — the map ends up
 // telling the story of what happened on it.
 export class DecalLayer {
-    constructor(scene, depth = 4) {
+    // Drawn straight into the ground texture rather than onto a layer of its
+    // own. The ground is baked once and never re-baked, so stamping into it is
+    // safe — and it saves compositing a second full-map texture every frame,
+    // which measurably is not free in a software renderer.
+    constructor(scene, ground) {
         this.scene = scene;
-        this.texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
-            .setOrigin(0, 0)
-            .setDepth(depth);
+        this.texture = ground;
     }
 
     stamp(draw) {
@@ -142,9 +144,6 @@ export class DecalLayer {
         });
     }
 
-    destroy() {
-        this.texture.destroy();
-    }
 }
 
 function drawGrass(g, rng) {

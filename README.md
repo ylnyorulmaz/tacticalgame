@@ -18,6 +18,8 @@ only needed to run the tests.
 
 ![End of a rescue mission, graded](docs/mission-complete.png)
 
+![Armour on both sides, with the ground that matters](docs/armour.png)
+
 ## Running it
 
 The game is plain static files, but it uses ES modules, so it needs to be served
@@ -51,9 +53,9 @@ automatic offline fallback, so the game still boots without a network.
 | `V` then click | Flashbang: blinds everyone who can see it |
 | `E` then click a door | Stack beside it and wait |
 | `Enter` | GO — everyone stacked goes through together |
-| `Z` | Pace: normal → sprint (fast, no shooting) → careful (slow, stays set) |
+| `Z` | Pace: normal → sprint (fast, no shooting) → careful (slow, stays set, silent) |
 | `Tab` | Cycle through the squad |
-| `1`–`6` | Select a specific unit (hold Shift to add) |
+| `1`–`8` | Select a specific unit (hold Shift to add) |
 | `Ctrl`+`A` | Select the whole squad |
 | `Esc` | Clear selection — or, once the mission ends, back to map select |
 | `W A S D` / arrows | Pan the camera |
@@ -96,6 +98,8 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   | **Medic** | Heals nearby squadmates, and revives downed ones before they bleed out |
   | **Marksman** | Very long range and heavy single shots, but must be stationary to fire — and its rifle is **suppressed**, so it is the one weapon that does not raise the alarm |
   | **Machine Gunner** | Wide, fast, sustained fire that pins hostiles so they stop shooting back |
+  | **AT Gunner** | A launcher that kills armour from any angle — but it has to be planted to fire, and its backblast hurts whoever is standing behind it |
+  | **Tank** (Outpost) | Yours to order like anyone else. Cannot follow the squad indoors, and its engine wakes the whole map |
 
   The bottom-right card shows the selected unit's Speed / Firepower /
   Survivability / Range, read straight off the same stat table the simulation
@@ -161,6 +165,40 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   choice too — sprinting is fast with the weapon down, creeping is slow but keeps
   the marksman set. `src/systems/orders.js` owns all of it; every unit carries one
   order record, and an untouched record behaves exactly as the game did before.
+- **Armour, and getting round it.** Tanks are on both sides. What makes them
+  different is not hit points but angles: the front plate stops nearly
+  everything, the sides are weaker, the back is soft. Rifle fire never hurts one
+  from any angle — it ricochets, which is how you learn where the way in is.
+
+  | | penetration | vs front 60 | vs side 34 | vs rear 14 |
+  | --- | --- | --- | --- | --- |
+  | rifles, MG, buckshot | 0 | – | – | – |
+  | frag grenade | 20 | – | – | ✔ |
+  | breaching charge | 45 | – | ✔ | ✔ |
+  | tank main gun | 70 | ✔ | ✔ | ✔ |
+  | AT launcher | 80 | ✔ | ✔ | ✔ |
+
+  So the AT gunner is the reliable answer, a breacher who gets behind one can do
+  it with a charge, and a grenadier can only ever hurt its back. A tank's turret
+  turns independently of its hull, which is what makes flanking a moving one
+  possible at all; it routes on its own wider grid with doorways sealed, so it
+  can never follow you indoors; and it is immune to suppression and flashbangs.
+  Knocked out, it stays on the map as a burnt hull that still blocks movement,
+  sight and bullets.
+- **Ground that plays differently.** Every cell of the map carries a surface, and
+  three separate questions read it: how fast you cross it, what it costs the
+  pathfinder (routes go round the mud rather than through it), and how much noise
+  you make. Gravel and rubble carry your footsteps — enough to send a hostile
+  looking, not enough to tell them what they are looking for — and a careful pace
+  makes none at all. Tall grass hides a man lying in it past about 150 px but
+  does nothing to hide a tank. Raised ground looks over crates and hedges and
+  sees a little further, and cuts both ways, since everyone can see you up there
+  too. Roads run in from the map's reinforcement entries, so the ground tells you
+  where the wave will come from.
+- **Cover you can spend.** Crates and sandbag lines have hit points and come
+  apart under blast, leaving rubble — still something to get behind, but slow and
+  loud to cross. Scorch marks, craters, debris and blood stay where they happened,
+  so a map you have fought over looks like one.
 - **Tools that change the ground, not just the damage.** Smoke is the important
   one: `src/systems/vision.js` keeps two occluder sets, and the game asks two
   different questions of them. `hasLineOfSight` is the bullet's question — walls,
@@ -264,6 +302,7 @@ src/systems/units.js    unit state, movement, breaching, damage, downed
 src/systems/combat.js   weapons, tracers, grenades, suppression
 src/systems/support.js  medic healing and revives
 src/systems/cover.js    how well a unit is shielded from a given threat
+src/systems/vehicles.js armour facets, penetration, and the tank brain
 src/systems/orders.js   the order record and every verb that writes it
 src/systems/alarm.js    the garrison's alert level and reinforcements
 src/systems/objectives.js  what the mission is for, and the end-of-run grade
@@ -287,8 +326,18 @@ Two knobs worth knowing about: `src/config.js` holds every gameplay number in on
 place, and `?renderer=canvas` forces Phaser's canvas backend (the fog has a
 separate code path there, since inverted geometry masks are WebGL-only).
 
-One performance note, measured rather than guessed: smoke is the only thing here
-that costs anything noticeable. Each cloud adds a twelve-sided occluder that
+Two performance notes, both measured rather than guessed.
+
+Terrain, concealment, elevation and destructible cover cost nothing: compared
+against the commit before them, on the same map with identical unit counts, the
+median is 6.9 fps before and 6.8 after under swiftshader. Getting there needed
+one change — decals are stamped into the ground texture rather than onto a layer
+of their own, because compositing a second full-map RenderTexture every frame was
+costing about 8% and the ground never re-bakes anyway. Armour costs what the
+extra units cost: Outpost goes from 13 units to 16, two of them tanks, and drops
+from 6.8 to 5.4 fps. That is content, not engine.
+
+The other note: smoke is the one mechanic here that costs anything noticeable. Each cloud adds a twelve-sided occluder that
 every sight test and every fog ray has to consider, and three clouds on screen at
 once cost roughly a fifth of the frame in a software renderer (11.8 → 9.4 fps on
 Outpost under swiftshader; hardware rendering has far more headroom). Clouds last
