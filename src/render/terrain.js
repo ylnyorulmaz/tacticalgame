@@ -32,7 +32,8 @@ function mulberry32(seed) {
     };
 }
 
-export function buildTerrain(scene, level, depth = 0) {
+// The ground: everything that cannot change during a mission. Baked once.
+export function buildGround(scene, level, depth = 0) {
     const g = scene.make.graphics({ add: false });
     const rng = mulberry32(99117);
 
@@ -43,7 +44,6 @@ export function buildTerrain(scene, level, depth = 0) {
     for (const road of level.roads || []) drawRoad(g, road);
     for (const tree of level.trees) drawTree(g, tree);
     drawBuilding(g, level);
-    for (const prop of level.props) drawProp(g, prop);
 
     const texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
         .setOrigin(0, 0)
@@ -51,6 +51,100 @@ export function buildTerrain(scene, level, depth = 0) {
     texture.draw(g);
     g.destroy();
     return texture;
+}
+
+// Cover, on its own texture because it can be blown apart. Re-baking ~15 props
+// is cheap; leaving them in the ground bake would mean a destroyed crate that
+// still shows on the map.
+export class PropLayer {
+    constructor(scene, level, depth = 5) {
+        this.scene = scene;
+        this.texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
+            .setOrigin(0, 0)
+            .setDepth(depth);
+        this.rebuild(level);
+    }
+
+    rebuild(level) {
+        const g = this.scene.make.graphics({ add: false });
+        for (const prop of level.props) drawProp(g, prop);
+        this.texture.clear();
+        this.texture.draw(g);
+        g.destroy();
+    }
+
+    destroy() {
+        this.texture.destroy();
+    }
+}
+
+// Everything the fight leaves behind: scorch rings, craters, blood and the
+// debris of whatever used to be cover. Drawn once and kept — the map ends up
+// telling the story of what happened on it.
+export class DecalLayer {
+    constructor(scene, depth = 4) {
+        this.scene = scene;
+        this.texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
+            .setOrigin(0, 0)
+            .setDepth(depth);
+    }
+
+    stamp(draw) {
+        const g = this.scene.make.graphics({ add: false });
+        draw(g);
+        this.texture.draw(g);
+        g.destroy();
+    }
+
+    // A detonation: scorched ground, a darker crater, and thrown dirt.
+    scorch(x, y, radius) {
+        const rng = mulberry32(Math.floor(x * 31 + y * 17));
+        this.stamp((g) => {
+            g.fillStyle(0x24211c, 0.34);
+            g.fillEllipse(x, y, radius * 1.5, radius * 1.25);
+            g.fillStyle(0x14120f, 0.5);
+            g.fillEllipse(x, y, radius * 0.66, radius * 0.55);
+            for (let i = 0; i < 14; i++) {
+                const angle = rng() * Math.PI * 2;
+                const reach = radius * (0.5 + rng() * 0.9);
+                g.fillStyle(0x2e2a23, 0.35 + rng() * 0.3);
+                g.fillCircle(x + Math.cos(angle) * reach, y + Math.sin(angle) * reach, 3 + rng() * 7);
+            }
+        });
+    }
+
+    // Where somebody fell. Sprayed along the direction the round was going.
+    blood(x, y, angle, hostile) {
+        const rng = mulberry32(Math.floor(x * 13 + y * 7));
+        const color = hostile ? 0x7a1010 : 0x8c1414;
+        this.stamp((g) => {
+            g.fillStyle(color, 0.55);
+            g.fillEllipse(x, y, 26, 20);
+            for (let i = 0; i < 9; i++) {
+                const spray = angle + (rng() - 0.5) * 1.1;
+                const reach = 10 + rng() * 46;
+                g.fillStyle(color, 0.3 + rng() * 0.3);
+                g.fillCircle(x + Math.cos(spray) * reach, y + Math.sin(spray) * reach, 2 + rng() * 5);
+            }
+        });
+    }
+
+    // What is left of a crate or a sandbag line once it has been blown apart.
+    debris(rect) {
+        const rng = mulberry32(Math.floor(rect.x * 7 + rect.y * 3));
+        this.stamp((g) => {
+            for (let i = 0; i < 26; i++) {
+                const x = rect.x + rng() * rect.w;
+                const y = rect.y + rng() * rect.h;
+                g.fillStyle(rng() > 0.5 ? 0x6b6156 : 0x4c453c, 0.55 + rng() * 0.35);
+                g.fillRect(x, y, 3 + rng() * 9, 3 + rng() * 7);
+            }
+        });
+    }
+
+    destroy() {
+        this.texture.destroy();
+    }
 }
 
 function drawGrass(g, rng) {

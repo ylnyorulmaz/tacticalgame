@@ -138,6 +138,45 @@ export function run(t) {
     surfaces(t);
     concealment(t);
     elevation(t);
+    destructibleCover(t);
+}
+
+// Cover is spent, not permanent. Blowing a crate apart has to change every
+// answer the world gives about that spot, not just what is drawn there.
+function destructibleCover(t) {
+    const w = world('warehouse');
+    const crate = w.level.props.find((p) => p.type === 'crate');
+    t.ok(Number.isFinite(crate.hp), 'a crate can be damaged');
+    t.ok(!Number.isFinite(w.level.props.find((p) => p.type === 'wreck').hp),
+        'a wrecked vehicle cannot');
+
+    // Sight and movement, before.
+    const west = { x: crate.x - 90, y: crate.y };
+    const east = { x: crate.x + 90, y: crate.y };
+    t.ok(!w.vision.canObserve(west.x, west.y, east.x, east.y), 'the crate blocks the view across it');
+    t.ok(w.nav.isBlockedWorld(crate.x, crate.y), 'and you cannot walk through it');
+
+    // One grenade's worth of blast, twice — a crate takes more than a scratch.
+    w.combat.explode({ x: crate.x, y: crate.y, radius: 96, damage: 40, team: 'friendly' }, w.units);
+    t.ok(w.level.props.includes(crate), 'one blast is not enough');
+    w.combat.explode({ x: crate.x, y: crate.y, radius: 96, damage: 40, team: 'friendly' }, w.units);
+    t.ok(!w.level.props.includes(crate), 'a second one takes it apart');
+
+    const broke = w.combat.events.filter((e) => e.kind === 'coverBreak');
+    t.equal(broke.length, 1, 'and says so exactly once');
+
+    // The scene rebuilds the world off that event; do the same here.
+    w.nav.rebuild();
+    w.vision.refreshSegments();
+    w.combat.refreshBlockers();
+
+    t.ok(w.vision.canObserve(west.x, west.y, east.x, east.y), 'now you can see across it');
+    t.ok(!w.nav.isBlockedWorld(crate.x, crate.y), 'and walk over it');
+    t.equal(
+        w.nav.surfaceAtWorld(crate.x, crate.y).id,
+        SURFACES.rubble.id,
+        'what is left is rubble: still cover, but slow and loud',
+    );
 }
 
 // Tall grass hides you without stopping anything. The rule that keeps it from

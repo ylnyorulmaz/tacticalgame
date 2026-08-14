@@ -448,6 +448,7 @@ export class CombatSystem {
             if (standing && !unit.alive) this.events.push({ type: 'down', x: unit.x, y: unit.y });
             unit.addSuppression(SUPPRESSION.threshold * falloff);
         }
+        this.damageCover(blast);
         this.explosions.push({ x: blast.x, y: blast.y, radius: blast.radius, ttl: EXPLOSION_TTL });
         this.events.push({
             type: blast.sound || 'explosion',
@@ -456,6 +457,35 @@ export class CombatSystem {
             y: blast.y,
             radius: blast.radius,
         });
+    }
+
+    // Cover is spent, not permanent. A blast chews through crates and sandbag
+    // lines; what is left is rubble, which is still something to get behind but
+    // slow and loud to cross.
+    damageCover(blast) {
+        const destroyed = [];
+        for (const prop of this.level.props) {
+            if (!Number.isFinite(prop.hp) || prop.hp <= 0) continue;
+            const reach = prop.type === 'sandbags' ? prop.radius : Math.max(prop.w, prop.h) / 2;
+            const dist = Math.hypot(prop.x - blast.x, prop.y - blast.y);
+            if (dist > blast.radius + reach) continue;
+
+            const falloff = 1 - Math.min(1, Math.max(0, dist - reach) / blast.radius);
+            prop.hp -= blast.damage * falloff;
+            if (prop.hp <= 0) destroyed.push(prop);
+        }
+        if (destroyed.length === 0) return;
+
+        for (const prop of destroyed) {
+            const index = this.level.props.indexOf(prop);
+            if (index >= 0) this.level.props.splice(index, 1);
+            const rect = propRect(prop);
+            this.level.terrain = this.level.terrain || [];
+            this.level.terrain.push({ kind: 'rubble', ...rect });
+            // No sound of its own: it rides the wall-strike clip, which is
+            // what splintering cover sounds like anyway.
+            this.events.push({ type: 'impact', kind: 'coverBreak', x: prop.x, y: prop.y, rect });
+        }
     }
 
     // A flashbang hurts nobody. It takes eyes and ears out of the fight for a
@@ -498,4 +528,14 @@ export class CombatSystem {
         }
         return false;
     }
+}
+
+// The ground a prop stands on, as a rect. Sandbag arcs get their bounding box,
+// which is what the rubble left behind should cover.
+function propRect(prop) {
+    if (prop.type === 'sandbags') {
+        const r = prop.radius + 20;
+        return { x: prop.x - r, y: prop.y - r, w: r * 2, h: r * 2 };
+    }
+    return { x: prop.x - prop.w / 2, y: prop.y - prop.h / 2, w: prop.w, h: prop.h };
 }

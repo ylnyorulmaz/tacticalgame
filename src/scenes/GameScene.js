@@ -17,7 +17,7 @@ import { ObjectiveSystem, rateMission } from '../systems/objectives.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
-import { buildTerrain } from '../render/terrain.js';
+import { buildGround, PropLayer, DecalLayer } from '../render/terrain.js';
 import { EntityRenderer } from '../render/entities.js';
 
 export class GameScene extends Phaser.Scene {
@@ -42,7 +42,11 @@ export class GameScene extends Phaser.Scene {
         this.level = buildMap(this.mapId);
         const level = this.level;
 
-        buildTerrain(this, level, 0);
+        buildGround(this, level, 0);
+        // Cover and the marks a fight leaves are their own layers: one gets
+        // re-baked when something is blown apart, the other only accumulates.
+        this.decals = new DecalLayer(this, 4);
+        this.props = new PropLayer(this, level, 5);
         this.vision = new VisionSystem(level);
         this.nav = new NavGrid(level);
         this.combat = new CombatSystem(level, this.vision);
@@ -122,6 +126,18 @@ export class GameScene extends Phaser.Scene {
         this.hostiles.push(unit);
         this.units.push(unit);
         return unit;
+    }
+
+    // A crate or a sandbag line has come apart. Everything that reads the world
+    // has to be told, which is the same refresh a door needs — plus a re-bake of
+    // the prop layer and some debris on the ground where it used to be.
+    coverDestroyed(event) {
+        this.decals.debris(event.rect);
+        this.props.rebuild(this.level);
+        this.nav.rebuild();
+        this.vision.refreshSegments();
+        this.combat.refreshBlockers();
+        this.pushFeed('Cover destroyed', '#b0a99c');
     }
 
     openDoor(door, chargedBy = null) {
@@ -329,6 +345,9 @@ export class GameScene extends Phaser.Scene {
         if (this.combat.events.length > 0) {
             for (const event of this.combat.events) {
                 if (event.kind === 'shot') this.shotsFired++;
+                if (event.kind === 'coverBreak') this.coverDestroyed(event);
+                if (event.kind === 'explosion') this.decals.scorch(event.x, event.y, event.radius);
+                if (event.type === 'down') this.decals.blood(event.x, event.y, event.angle || 0, event.team !== 'friendly');
                 this.audio.play(event.type, event.x, event.y);
                 this.effects.handle(event);
                 this.recordEvent(event);
