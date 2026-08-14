@@ -5,6 +5,22 @@
 import { WORLD, COLORS } from '../config.js';
 import { SANDBAG_HALF_SPREAD } from '../level.js';
 
+// Terrain is stored as rectangles because that is what the nav grid wants to
+// paint from. Drawing them as rectangles would look like a tile editor threw up
+// on the field, so each patch is filled with overlapping blobs seeded from its
+// own position — same patch, same shape, every time the map loads.
+const SURFACE_STYLE = {
+    mud: { base: 0x5c4326, blob: 0x6b4f2d, speck: 0x3f2d1a, density: 0.00028, speckle: 0.0004 },
+    // Sandy rather than grey: a grey patch on this palette reads as a smoke
+    // cloud, and smoke means something entirely different.
+    gravel: { base: 0xa89a72, blob: 0xb5a67d, speck: 0x7a6e50, density: 0.00022, speckle: 0.0016 },
+    rubble: { base: 0x8a7f70, blob: 0x978b7b, speck: 0x554d43, density: 0.00030, speckle: 0.0022 },
+    grass: { base: 0x1a7d0e, blob: 0x1f8a12, speck: 0x3fc022, density: 0.00030, speckle: 0.0034 },
+    high: { base: 0x57b93c, blob: 0x63c748, speck: 0x2b7d1c, density: 0.00024, speckle: 0.0006 },
+};
+
+const ROAD = { base: 0x7a6a4e, edge: 0x6a5c43, rut: 0x5d5039 };
+
 function mulberry32(seed) {
     let a = seed >>> 0;
     return function () {
@@ -16,15 +32,18 @@ function mulberry32(seed) {
     };
 }
 
-export function buildTerrain(scene, level, depth = 0) {
+// The ground: everything that cannot change during a mission. Baked once.
+export function buildGround(scene, level, depth = 0) {
     const g = scene.make.graphics({ add: false });
     const rng = mulberry32(99117);
 
     drawGrass(g, rng);
     drawGrid(g);
+    // Ground cover before roads: a track laid over a field, not under it.
+    for (const patch of level.terrain || []) drawSurface(g, patch);
+    for (const road of level.roads || []) drawRoad(g, road);
     for (const tree of level.trees) drawTree(g, tree);
     drawBuilding(g, level);
-    for (const prop of level.props) drawProp(g, prop);
 
     const texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
         .setOrigin(0, 0)
@@ -32,6 +51,99 @@ export function buildTerrain(scene, level, depth = 0) {
     texture.draw(g);
     g.destroy();
     return texture;
+}
+
+// Cover, on its own texture because it can be blown apart. Re-baking ~15 props
+// is cheap; leaving them in the ground bake would mean a destroyed crate that
+// still shows on the map.
+export class PropLayer {
+    constructor(scene, level, depth = 5) {
+        this.scene = scene;
+        this.texture = scene.add.renderTexture(0, 0, WORLD.width, WORLD.height)
+            .setOrigin(0, 0)
+            .setDepth(depth);
+        this.rebuild(level);
+    }
+
+    rebuild(level) {
+        const g = this.scene.make.graphics({ add: false });
+        for (const prop of level.props) drawProp(g, prop);
+        this.texture.clear();
+        this.texture.draw(g);
+        g.destroy();
+    }
+
+    destroy() {
+        this.texture.destroy();
+    }
+}
+
+// Everything the fight leaves behind: scorch rings, craters, blood and the
+// debris of whatever used to be cover. Drawn once and kept — the map ends up
+// telling the story of what happened on it.
+export class DecalLayer {
+    // Drawn straight into the ground texture rather than onto a layer of its
+    // own. The ground is baked once and never re-baked, so stamping into it is
+    // safe — and it saves compositing a second full-map texture every frame,
+    // which measurably is not free in a software renderer.
+    constructor(scene, ground) {
+        this.scene = scene;
+        this.texture = ground;
+    }
+
+    stamp(draw) {
+        const g = this.scene.make.graphics({ add: false });
+        draw(g);
+        this.texture.draw(g);
+        g.destroy();
+    }
+
+    // A detonation: scorched ground, a darker crater, and thrown dirt.
+    scorch(x, y, radius) {
+        const rng = mulberry32(Math.floor(x * 31 + y * 17));
+        this.stamp((g) => {
+            g.fillStyle(0x24211c, 0.34);
+            g.fillEllipse(x, y, radius * 1.5, radius * 1.25);
+            g.fillStyle(0x14120f, 0.5);
+            g.fillEllipse(x, y, radius * 0.66, radius * 0.55);
+            for (let i = 0; i < 14; i++) {
+                const angle = rng() * Math.PI * 2;
+                const reach = radius * (0.5 + rng() * 0.9);
+                g.fillStyle(0x2e2a23, 0.35 + rng() * 0.3);
+                g.fillCircle(x + Math.cos(angle) * reach, y + Math.sin(angle) * reach, 3 + rng() * 7);
+            }
+        });
+    }
+
+    // Where somebody fell. Sprayed along the direction the round was going.
+    blood(x, y, angle, hostile) {
+        const rng = mulberry32(Math.floor(x * 13 + y * 7));
+        const color = hostile ? 0x7a1010 : 0x8c1414;
+        this.stamp((g) => {
+            g.fillStyle(color, 0.55);
+            g.fillEllipse(x, y, 26, 20);
+            for (let i = 0; i < 9; i++) {
+                const spray = angle + (rng() - 0.5) * 1.1;
+                const reach = 10 + rng() * 46;
+                g.fillStyle(color, 0.3 + rng() * 0.3);
+                g.fillCircle(x + Math.cos(spray) * reach, y + Math.sin(spray) * reach, 2 + rng() * 5);
+            }
+        });
+    }
+
+    // What is left of a crate or a sandbag line once it has been blown apart.
+    debris(rect) {
+        const rng = mulberry32(Math.floor(rect.x * 7 + rect.y * 3));
+        this.stamp((g) => {
+            for (let i = 0; i < 26; i++) {
+                const x = rect.x + rng() * rect.w;
+                const y = rect.y + rng() * rect.h;
+                g.fillStyle(rng() > 0.5 ? 0x6b6156 : 0x4c453c, 0.55 + rng() * 0.35);
+                g.fillRect(x, y, 3 + rng() * 9, 3 + rng() * 7);
+            }
+        });
+    }
+
 }
 
 function drawGrass(g, rng) {
@@ -54,6 +166,97 @@ function drawGrid(g) {
     g.lineStyle(1.5, COLORS.grid, 0.16);
     for (let x = 0; x <= WORLD.width; x += step) g.lineBetween(x, 0, x, WORLD.height);
     for (let y = 0; y <= WORLD.height; y += step) g.lineBetween(0, y, WORLD.width, y);
+}
+
+// A patch of ground that plays differently: mud, gravel, rubble, tall grass or
+// raised earth. Seeded from the patch's own corner so it looks identical on
+// every load without anything being stored.
+function drawSurface(g, patch) {
+    const style = SURFACE_STYLE[patch.kind];
+    if (!style) return;
+    const rng = mulberry32(Math.floor(patch.x * 7349 + patch.y * 911 + patch.w));
+    const area = patch.w * patch.h;
+
+    // Body: overlapping ellipses inset from the edge so the rectangle never
+    // shows, plus a soft rim that fades the patch into the field.
+    const blobs = Math.max(6, Math.floor(area * style.density));
+    for (let i = 0; i < blobs; i++) {
+        const x = patch.x + rng() * patch.w;
+        const y = patch.y + rng() * patch.h;
+        const w = 60 + rng() * Math.min(220, patch.w * 0.55);
+        const h = 45 + rng() * Math.min(170, patch.h * 0.55);
+        g.fillStyle(rng() > 0.5 ? style.base : style.blob, 0.86);
+        g.fillEllipse(x, y, w, h);
+    }
+
+    // Texture: grit on gravel, strands on grass, clods in mud.
+    const specks = Math.floor(area * style.speckle);
+    for (let i = 0; i < specks; i++) {
+        const x = patch.x + rng() * patch.w;
+        const y = patch.y + rng() * patch.h;
+        if (patch.kind === 'grass') {
+            g.lineStyle(2, style.speck, 0.5 + rng() * 0.3);
+            const lean = (rng() - 0.5) * 6;
+            g.lineBetween(x, y, x + lean, y - 8 - rng() * 9);
+            continue;
+        }
+        g.fillStyle(style.speck, 0.35 + rng() * 0.4);
+        g.fillCircle(x, y, 1.4 + rng() * 2.4);
+    }
+
+    // Raised ground has to read as raised at a glance, because standing on it
+    // changes what you can see: a hard shadow along the lower edge, a lit crest
+    // along the upper one, and a contour ring round the whole thing.
+    if (patch.kind === 'high') {
+        const cx = patch.x + patch.w / 2;
+        const cy = patch.y + patch.h / 2;
+        g.fillStyle(0x15490d, 0.55);
+        g.fillEllipse(cx, patch.y + patch.h - 6, patch.w * 0.98, 34);
+        g.fillStyle(0x7ad85c, 0.4);
+        g.fillEllipse(cx, patch.y + 10, patch.w * 0.9, 22);
+        g.lineStyle(4, 0x8ce069, 0.6);
+        g.strokeEllipse(cx, cy, patch.w * 0.92, patch.h * 0.88);
+        g.lineStyle(2, 0x8ce069, 0.35);
+        g.strokeEllipse(cx, cy, patch.w * 0.62, patch.h * 0.58);
+    }
+}
+
+// A dirt track: a wide band down the polyline, a darker shoulder, and two ruts
+// where the wheels go. Tracks run from the map's entry roads to the objective,
+// so they double as a hint about where reinforcements will come from.
+function drawRoad(g, road) {
+    const points = road.points;
+    const width = road.width || 64;
+
+    const band = (w, color, alpha) => {
+        g.lineStyle(w, color, alpha);
+        for (let i = 0; i < points.length - 1; i++) {
+            g.lineBetween(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y);
+        }
+        // Round the corners so the joints do not show as notches.
+        for (const point of points) {
+            g.fillStyle(color, alpha);
+            g.fillCircle(point.x, point.y, w / 2);
+        }
+    };
+
+    band(width + 10, ROAD.edge, 0.75);
+    band(width, ROAD.base, 1);
+
+    // Ruts, offset either side of the centre line.
+    for (const side of [-1, 1]) {
+        g.lineStyle(5, ROAD.rut, 0.5);
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            const angle = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
+            const off = side * width * 0.22;
+            g.lineBetween(
+                a.x + Math.cos(angle) * off, a.y + Math.sin(angle) * off,
+                b.x + Math.cos(angle) * off, b.y + Math.sin(angle) * off,
+            );
+        }
+    }
 }
 
 // Leafy blob: a dark underside, a mid body and a bright top, each scalloped with
@@ -97,6 +300,9 @@ function drawBuilding(g, level) {
 }
 
 function drawProp(g, prop) {
+    // Hidden props are pure collision — a knocked-out tank's footprint, drawn
+    // from the unit itself so the hull keeps the angle it died at.
+    if (prop.hidden) return;
     if (prop.type === 'wreck') {
         const x = prop.x - prop.w / 2;
         const y = prop.y - prop.h / 2;

@@ -213,8 +213,8 @@ function nearestVisible(unit, ctx) {
     for (const friendly of ctx.friendlies) {
         if (!friendly.alive) continue;
         const dist = Math.hypot(friendly.x - unit.x, friendly.y - unit.y);
-        if (dist > unit.stats.sight || dist > bestDist) continue;
-        if (!ctx.vision.canObserve(unit.x, unit.y, friendly.x, friendly.y)) continue;
+        if (dist > ctx.vision.sightRadius(unit) || dist > bestDist) continue;
+        if (!ctx.vision.canSeeUnit(unit.x, unit.y, friendly)) continue;
         best = friendly;
         bestDist = dist;
     }
@@ -226,8 +226,8 @@ function visibleBody(unit, ctx) {
         if (mate.alive || mate === unit) continue;
         if (unit.ai.seenBodies.has(mate.id)) continue;
         const dist = Math.hypot(mate.x - unit.x, mate.y - unit.y);
-        if (dist > unit.stats.sight * 0.7) continue;
-        if (!ctx.vision.canObserve(unit.x, unit.y, mate.x, mate.y)) continue;
+        if (dist > ctx.vision.sightRadius(unit) * 0.7) continue;
+        if (!ctx.vision.canSeeUnit(unit.x, unit.y, mate)) continue;
         return mate;
     }
     return null;

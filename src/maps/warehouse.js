@@ -85,6 +85,8 @@ export function build() {
             { cls: 'grenadier', x: 970, y: 1262, facing: -Math.PI / 2 },
             { cls: 'medic', x: 1040, y: 1230, facing: -Math.PI / 2 },
             { cls: 'marksman', x: 1110, y: 1262, facing: -Math.PI / 2 },
+            // Brought along because there is armour in the yard.
+            { cls: 'antitank', x: 1180, y: 1230, facing: -Math.PI / 2 },
         ],
         hostiles: [
             // South-west bay: first contact through the loading door.
@@ -102,12 +104,29 @@ export function build() {
             { cls: 'hostileShotgun', x: 1650, y: 820, facing: Math.PI, route: null },
             // Outside, behind the wrecked truck in the east yard.
             { cls: 'hostileHeavy', x: 2020, y: 700, facing: Math.PI, route: null },
+            // Dug in on the yard road, gun laid west across the loading door.
+            // Harmless while you are inside; squarely on the way out.
+            { cls: 'hostileTank', x: 2140, y: 900, facing: Math.PI, route: null },
         ],
         // The alarm brings a team in off the yard: the north gate and the
         // east loading road.
         reinforce: [{ x: 1200, y: 120 }, { x: 2280, y: 900 }],
         // Get in, take what you came for, get out — the garrison is an
         // obstacle rather than the objective.
+        // Loading yard: gravel where the trucks turn, mud in the churned-up
+        // east yard where the tank sits, grass along the southern approach.
+        terrain: [
+            { kind: 'gravel', x: 620, y: 1000, w: 700, h: 220 },
+            { kind: 'gravel', x: 1860, y: 700, w: 420, h: 320 },
+            { kind: 'mud', x: 1900, y: 1040, w: 380, h: 260 },
+            { kind: 'grass', x: 240, y: 1120, w: 520, h: 300 },
+            { kind: 'grass', x: 1300, y: 1180, w: 460, h: 240 },
+            { kind: 'high', x: 320, y: 560, w: 200, h: 260 },
+        ],
+        roads: [
+            { width: 76, points: [{ x: 1200, y: 60 }, { x: 1200, y: 200 }, { x: 1960, y: 340 }, { x: 2260, y: 880 }] },
+            { width: 60, points: [{ x: 2260, y: 900 }, { x: 1700, y: 1060 }, { x: 900, y: 1100 }] },
+        ],
         objectives: [
             { kind: 'intel', x: 1740, y: 380, label: 'Recover the intel' },
             { kind: 'exfil', x: 840, y: 1200, w: 360, h: 130, label: 'Exfil with the squad' },

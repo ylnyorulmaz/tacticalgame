@@ -15,7 +15,8 @@ import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
 import { AlarmSystem, CALM, ALARMED } from '../src/systems/alarm.js';
 import { ObjectiveSystem, rateMission } from '../src/systems/objectives.js';
-import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM } from '../src/config.js';
+import { isVehicle, armourFacet } from '../src/systems/vehicles.js';
+import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM, SURFACES } from '../src/config.js';
 
 export const name = 'tactics';
 
@@ -59,9 +60,14 @@ function world(mapId = 'compound') {
 
     // Classified by team, not by "not friendly": a civilian belongs to neither
     // side, exactly as GameScene keeps them out of both lists.
-    w.add = (cls, x, y, facing = 0) => {
+    //
+    // `inert` adds a body that the simulation can shoot, blast and step around
+    // but that never thinks — useful when a case is about a weapon or a tool and
+    // a reacting hostile would go and do something else halfway through.
+    w.add = (cls, x, y, facing = 0, { inert = false } = {}) => {
         const unit = new Unit({ cls, x, y, facing });
         units.push(unit);
+        if (inert) return unit;
         if (unit.team === 'friendly') w.friendlies.push(unit);
         else if (unit.team === 'hostile') w.hostiles.push(unit);
         return unit;
@@ -71,6 +77,7 @@ function world(mapId = 'compound') {
     w.run = (ms) => {
         for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
             w.now += STEP;
+            w.ctx.now = w.now;
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
@@ -90,6 +97,7 @@ function world(mapId = 'compound') {
         let shots = 0;
         for (let elapsed = 0; elapsed < ms; elapsed += STEP) {
             w.now += STEP;
+            w.ctx.now = w.now;
             for (const hostile of w.hostiles) updateHostile(hostile, STEP, w.ctx);
             for (const unit of units) unit.update(STEP, w.ctx);
             combat.update(STEP, units, w.now);
@@ -109,8 +117,10 @@ function world(mapId = 'compound') {
     return w;
 }
 
-// Somewhere in the open on the compound map, well clear of the building.
-const OPEN = { x: 300, y: 1200 };
+// Somewhere in the open on the compound map: clear of the building, and clear
+// of the terrain patches too — a case about weapons should not accidentally
+// become a case about tall grass.
+const OPEN = { x: 320, y: 1420 };
 
 export function run(t) {
     holdFire(t);
@@ -126,6 +136,327 @@ export function run(t) {
     alarm(t);
     objectives(t);
     rating(t);
+    surfaces(t);
+    concealment(t);
+    elevation(t);
+    destructibleCover(t);
+    armour(t);
+    vehicleNavigation(t);
+    antiTank(t);
+    squadTank(t);
+}
+
+// The AT gunner is the reliable answer to armour, and the backblast is the
+// reason where it sets up is a decision.
+function antiTank(t) {
+    const w = world('outpost');
+    const gunner = w.add('antitank', OPEN.x, OPEN.y);
+    const tank = w.add('hostileTank', OPEN.x + 420, OPEN.y, 0);   // nose pointed away
+    t.ok(gunner.mainGunRounds > 0, 'the gunner deploys with rockets');
+
+    const rounds = gunner.mainGunRounds;
+    const hp = tank.hp;
+    w.run(9000);
+    t.ok(gunner.mainGunRounds < rounds, 'it uses the launcher on armour');
+    t.ok(tank.hp < hp, `and the launcher gets through (${Math.round(hp - tank.hp)} damage)`);
+
+    // Backblast: behind is dangerous, beside is not.
+    const b = world('outpost');
+    const shooter = b.add('antitank', OPEN.x, OPEN.y);
+    shooter.turretAngle = 0;
+    shooter.facing = 0;
+    const spec = UNIT_CLASSES.antitank.mainGun.backblast;
+    const behind = b.add('operator', OPEN.x - spec.range * 0.4, OPEN.y);
+    const beside = b.add('operator', OPEN.x, OPEN.y + spec.range * 0.4);
+    b.combat.fireMain(shooter, 0, b.units);
+    t.ok(behind.hp < behind.maxHp, 'standing behind the launcher hurts');
+    t.equal(beside.hp, beside.maxHp, 'standing beside it does not');
+
+    // Out of rockets, it is a man with a sidearm.
+    shooter.mainGunRounds = 0;
+    shooter.target = b.add('hostileTank', OPEN.x + 300, OPEN.y);
+    t.ok(!b.combat.mayFireMain(shooter), 'an empty launcher does not fire');
+}
+
+// Our own tank obeys the same orders as everybody else, and pays the same
+// prices: it cannot go indoors, and its engine wakes the map.
+function squadTank(t) {
+    const w = world('outpost');
+    const spec = w.level.squad.find((u) => u.cls === 'tank');
+    t.ok(!!spec, 'the outpost sends a tank along');
+
+    // Open ground east of the huts: the tank's own spawn sits in tall grass,
+    // and a target standing in that is concealed rather than un-shootable.
+    const yard = { x: 1600, y: 1250 };
+    const tank = w.add('tank', yard.x, yard.y);
+    const enemy = w.add('hostile', yard.x + 300, yard.y, 0, { inert: true });
+    enemy.maxHp = 1e6;
+    enemy.hp = 1e6;
+
+    // Hold fire works on a tank exactly as it does on a rifleman.
+    orders.toggleHold([tank]);
+    t.equal(w.countShots(2500, tank), 0, 'a tank told to hold fire holds it');
+    orders.toggleHold([tank]);
+    t.ok(w.countShots(2500, tank) > 0, 'and opens up when released');
+
+    // The turret tracks the target while the hull stays where it was put.
+    const aimed = Math.abs(Math.atan2(
+        Math.sin(tank.turretAngle - tank.aimAngle),
+        Math.cos(tank.turretAngle - tank.aimAngle),
+    ));
+    t.ok(aimed < 0.2, 'the turret comes onto the target');
+
+    // Driving it is loud enough to be the alarm by itself.
+    const loud = world('outpost');
+    const ours = loud.add('tank', spec.x, spec.y);
+    loud.add('hostile', spec.x + 400, spec.y + 200, 0, { inert: true });
+    ours.setPath([{ x: spec.x + 200, y: spec.y }]);
+    loud.run(1200);
+    t.ok(
+        loud.ctx.noises.some((n) => n.loud && n.team === 'friendly'),
+        'a moving tank makes a noise that raises the alarm',
+    );
+}
+
+// Facing armour is the whole point of a tank: the front is a wall, the back is
+// not, and the answer is to get round it or bring the right weapon.
+function armour(t) {
+    const w = world('outpost');
+    const tank = w.add('hostileTank', OPEN.x + 400, OPEN.y, Math.PI);   // nose pointing west
+    t.ok(isVehicle(tank), 'a tank is a vehicle');
+    t.equal(armourFacet(tank, 0), 'front', 'a round travelling east hits the nose it is pointed at');
+    t.equal(armourFacet(tank, Math.PI), 'rear', 'one travelling west catches the back');
+    t.equal(armourFacet(tank, Math.PI / 2), 'side', 'and one from the flank hits the flank');
+
+    // Rifle fire does nothing from any angle.
+    const start = tank.hp;
+    for (const angle of [0, Math.PI / 2, Math.PI]) {
+        tank.takeDamage(40, { penetration: 0, angle });
+    }
+    t.equal(tank.hp, start, 'small arms do nothing to armour from any side');
+    t.ok(!tank.takeDamage(40, { penetration: 0, angle: 0 }), 'and the hit reports itself as stopped');
+
+    // A frag only ever hurts the back plate.
+    t.ok(!tank.takeDamage(50, { penetration: TOOLS.frag.penetration, angle: 0 }),
+        'a grenade cannot get through the front');
+    t.ok(tank.takeDamage(50, { penetration: TOOLS.frag.penetration, angle: Math.PI }),
+        'but it can get through the back');
+
+    // A charge gets in from the flank; the launcher gets in anywhere.
+    const flanked = w.add('hostileTank', OPEN.x + 700, OPEN.y, Math.PI);
+    t.ok(flanked.takeDamage(50, { penetration: TOOLS.charge.penetration, angle: Math.PI / 2 }),
+        'a breaching charge on the flank does the job');
+    t.ok(!flanked.takeDamage(50, { penetration: TOOLS.charge.penetration, angle: 0 }),
+        'the same charge on the front does not');
+
+    const anywhere = w.add('hostileTank', OPEN.x + 900, OPEN.y, Math.PI);
+    t.ok(anywhere.takeDamage(10, { penetration: 80, angle: 0 }), 'a launcher goes through the front');
+
+    // And a tank cannot be suppressed or blinded.
+    tank.addSuppression(500);
+    tank.blind(4000);
+    t.equal(tank.suppression, 0, 'a tank cannot be suppressed');
+    t.equal(tank.blinded, 0, 'and cannot be flashbanged');
+
+    // Killing it leaves a hulk rather than a body that can be revived.
+    const doomed = w.add('hostileTank', OPEN.x + 1100, OPEN.y);
+    doomed.takeDamage(9999);
+    t.ok(!doomed.alive && !doomed.downed, 'a knocked-out tank stays knocked out');
+}
+
+// A tank is too wide for a doorway, which is what makes a building somewhere to
+// run to rather than just somewhere to fight in.
+function vehicleNavigation(t) {
+    const w = world('warehouse');
+    const spec = w.level.hostiles.find((h) => h.cls === 'hostileTank');
+    t.ok(!!spec, 'the warehouse has a tank on it');
+
+    const vehicleNav = new NavGrid(w.level, { radius: 34, doorsPassable: false });
+    t.ok(!vehicleNav.isBlockedWorld(spec.x, spec.y), 'it starts somewhere it can actually sit');
+
+    // Inside the building: infantry can path there, armour cannot.
+    const inside = { x: 1200, y: 500 };
+    t.ok(!!w.nav.findPath(spec.x, spec.y, inside.x, inside.y), 'infantry can walk inside');
+    t.equal(vehicleNav.findPath(spec.x, spec.y, inside.x, inside.y), null,
+        'a tank cannot follow them in');
+
+    // But it can get to the extraction zone, which is the whole threat.
+    const zone = w.objectives.exfil;
+    t.ok(
+        !!vehicleNav.findPath(spec.x, spec.y, zone.x + zone.w / 2, zone.y + zone.h / 2),
+        'and it can reach the ground the squad has to exfil across',
+    );
+}
+
+// Cover is spent, not permanent. Blowing a crate apart has to change every
+// answer the world gives about that spot, not just what is drawn there.
+function destructibleCover(t) {
+    const w = world('warehouse');
+    const crate = w.level.props.find((p) => p.type === 'crate');
+    t.ok(Number.isFinite(crate.hp), 'a crate can be damaged');
+    t.ok(!Number.isFinite(w.level.props.find((p) => p.type === 'wreck').hp),
+        'a wrecked vehicle cannot');
+
+    // Sight and movement, before.
+    const west = { x: crate.x - 90, y: crate.y };
+    const east = { x: crate.x + 90, y: crate.y };
+    t.ok(!w.vision.canObserve(west.x, west.y, east.x, east.y), 'the crate blocks the view across it');
+    t.ok(w.nav.isBlockedWorld(crate.x, crate.y), 'and you cannot walk through it');
+
+    // One grenade's worth of blast, twice — a crate takes more than a scratch.
+    w.combat.explode({ x: crate.x, y: crate.y, radius: 96, damage: 40, team: 'friendly' }, w.units);
+    t.ok(w.level.props.includes(crate), 'one blast is not enough');
+    w.combat.explode({ x: crate.x, y: crate.y, radius: 96, damage: 40, team: 'friendly' }, w.units);
+    t.ok(!w.level.props.includes(crate), 'a second one takes it apart');
+
+    const broke = w.combat.events.filter((e) => e.kind === 'coverBreak');
+    t.equal(broke.length, 1, 'and says so exactly once');
+
+    // The scene rebuilds the world off that event; do the same here.
+    w.nav.rebuild();
+    w.vision.refreshSegments();
+    w.combat.refreshBlockers();
+
+    t.ok(w.vision.canObserve(west.x, west.y, east.x, east.y), 'now you can see across it');
+    t.ok(!w.nav.isBlockedWorld(crate.x, crate.y), 'and walk over it');
+    t.equal(
+        w.nav.surfaceAtWorld(crate.x, crate.y).id,
+        SURFACES.rubble.id,
+        'what is left is rubble: still cover, but slow and loud',
+    );
+}
+
+// Tall grass hides you without stopping anything. The rule that keeps it from
+// being a wall is the range one, so that is what gets pinned down.
+function concealment(t) {
+    const w = world('outpost');
+    const grass = w.level.terrain.find((p) => p.kind === 'grass');
+    t.ok(!!grass, 'the outpost has tall grass on it');
+
+    // A target just inside the near edge, seen from far off and from arm's
+    // length. The distance between the two observers is the whole rule.
+    const cy = grass.y + grass.h / 2;
+    const inside = { x: grass.x + 40, y: cy };
+    const far = { x: grass.x - 340, y: cy };
+    const close = { x: grass.x - 60, y: cy };
+
+    t.ok(!w.vision.canObserve(far.x, far.y, inside.x, inside.y),
+        'somebody standing off in the field cannot be picked out from across the grass');
+    t.ok(w.vision.canObserve(close.x, close.y, inside.x, inside.y),
+        'but from the edge of it they can');
+    t.ok(w.vision.hasLineOfSight(far.x, far.y, inside.x, inside.y),
+        'and a bullet crosses the grass either way');
+
+    // The same in the simulation: a hostile in the grass cannot be acquired
+    // from range, and can be from close up.
+    const shooter = w.add('operator', far.x, far.y);
+    const hidden = w.add('hostile', inside.x, inside.y, 0, { inert: true });
+    hidden.maxHp = 1e6;
+    hidden.hp = 1e6;
+    w.combat.acquire(shooter, [hidden]);
+    t.equal(shooter.target, null, 'nothing to acquire through a field of grass');
+    shooter.x = close.x;
+    w.combat.acquire(shooter, [hidden]);
+    t.equal(shooter.target, hidden, 'and a contact once you are on top of it');
+}
+
+// Raised ground looks over chest-high cover. It cuts both ways, which is the
+// half that makes a berm a decision rather than a free win.
+function elevation(t) {
+    const w = world('warehouse');
+    const berm = w.level.terrain.find((p) => p.kind === 'high');
+    t.ok(!!berm, 'the warehouse has raised ground on it');
+    t.ok(w.vision.elevatedAt(berm.x + berm.w / 2, berm.y + berm.h / 2), 'the vision system knows it is raised');
+
+    // Build the geometry rather than hunting for it on the map: a crate east of
+    // the berm and a target just behind it. Then ask the same question twice,
+    // once with the berm and once without, so the only thing that differs is
+    // the height of the observer.
+    // North of the berm is open ground — the warehouse itself is away to the
+    // east, and a wall would block the view from any height.
+    const high = { x: berm.x + berm.w / 2, y: berm.y + berm.h / 2 };
+    w.level.props.push({
+        type: 'crate', x: high.x, y: high.y - 150, w: 62, h: 62,
+        blocksSight: true, blocksMove: true,
+    });
+    w.vision.refreshSegments();
+    const behind = { x: high.x, y: high.y - 240 };
+
+    t.ok(w.vision.canObserve(high.x, high.y, behind.x, behind.y),
+        'from the berm you see over the crate');
+    const raised = w.vision.high;
+    w.vision.high = [];
+    t.ok(!w.vision.canObserve(high.x, high.y, behind.x, behind.y),
+        'from ground level the same crate blocks you');
+    t.ok(!w.vision.hasLineOfSight(high.x, high.y, behind.x, behind.y),
+        'and a bullet is stopped by it from either height');
+    w.vision.high = raised;
+
+    // Walls are walls from any height.
+    const wall = w.level.walls[0];
+    const insideBuilding = { x: wall.x + 200, y: wall.y + 120 };
+    t.ok(!w.vision.canObserve(high.x, high.y, insideBuilding.x, insideBuilding.y),
+        'a wall still blocks somebody standing on a berm');
+
+    // And the extra reach that comes with the height.
+    const spotter = w.add('marksman', high.x, high.y);
+    t.ok(
+        w.vision.sightRadius(spotter) > spotter.stats.sight,
+        'raised ground sees further',
+    );
+    spotter.x = berm.x - 120;
+    spotter.y = berm.y + berm.h + 120;
+    t.ok(!w.vision.elevatedAt(spotter.x, spotter.y), 'the spot beside the berm is flat');
+    t.equal(w.vision.sightRadius(spotter), spotter.stats.sight, 'flat ground does not');
+}
+
+// The ground itself: slow where it should be slow, loud where it should be
+// loud, and expensive enough that A* routes around the worst of it.
+function surfaces(t) {
+    const w = world('outpost');
+    const mud = w.level.terrain.find((p) => p.kind === 'mud');
+    const gravel = w.level.terrain.find((p) => p.kind === 'gravel');
+    t.ok(!!mud && !!gravel, 'the outpost has mud and gravel on it');
+    t.equal(w.nav.surfaceAtWorld(mud.x + mud.w / 2, mud.y + mud.h / 2).id, SURFACES.mud.id,
+        'the nav grid knows what the ground is made of');
+
+    // Same distance, different ground: mud is measurably slower.
+    const inMud = w.add('operator', mud.x + 30, mud.y + mud.h / 2);
+    const onGrass = w.add('operator', mud.x + 30, mud.y - 200);
+    inMud.setPath([{ x: mud.x + mud.w - 30, y: mud.y + mud.h / 2 }]);
+    onGrass.setPath([{ x: mud.x + mud.w - 30, y: mud.y - 200 }]);
+    const mudFrom = inMud.x;
+    const grassFrom = onGrass.x;
+    w.run(1000);
+    t.ok(
+        inMud.x - mudFrom < (onGrass.x - grassFrom) * 0.8,
+        `mud slows a unit down (${Math.round(inMud.x - mudFrom)} vs ${Math.round(onGrass.x - grassFrom)} px)`,
+    );
+
+    // A* pays the surface cost, so a route prefers to go round the mud.
+    const path = w.nav.findPath(mud.x - 120, mud.y + mud.h / 2, mud.x + mud.w + 120, mud.y + mud.h / 2);
+    t.ok(!!path, 'a route across the mud exists');
+    const throughMud = path.filter(
+        (p) => p.x >= mud.x && p.x <= mud.x + mud.w && p.y >= mud.y && p.y <= mud.y + mud.h,
+    ).length;
+    t.ok(throughMud <= 1, `and it prefers to go around it (${throughMud} waypoints inside)`);
+
+    // Gravel gives you away; creeping over it does not.
+    const noisy = world('outpost');
+    const walker = noisy.add('operator', gravel.x + 40, gravel.y + gravel.h / 2);
+    walker.setPath([{ x: gravel.x + gravel.w - 40, y: gravel.y + gravel.h / 2 }]);
+    noisy.run(1500);
+    const heard = noisy.ctx.noises.filter((n) => !n.loud).length;
+    t.ok(heard > 0, 'walking on gravel makes a noise somebody could hear');
+
+    const quiet = world('outpost');
+    const creeper = quiet.add('operator', gravel.x + 40, gravel.y + gravel.h / 2);
+    orders.cyclePace([creeper]);
+    orders.cyclePace([creeper]);
+    t.equal(creeper.order.pace, 'careful', 'the creeper is on a careful pace');
+    creeper.setPath([{ x: gravel.x + gravel.w - 40, y: gravel.y + gravel.h / 2 }]);
+    quiet.run(1500);
+    t.equal(quiet.ctx.noises.length, 0, 'and creeping over the same ground makes none');
 }
 
 // What the mission is for. Two of the three maps end on something other than
@@ -312,8 +643,10 @@ function breachingCharge(t) {
     const charges = breacher.kit.charge;
     t.ok(charges > 0, 'the breacher deploys with charges');
 
-    // Standing right behind the door, on the inside.
-    const inside = w.add('hostile', door.x + door.w / 2, door.y - 60);
+    // Standing right behind the door, on the inside — and inert, because a
+    // thinking one hears the breacher crossing the gravel outside and opens the
+    // door itself, which is correct behaviour but not what this case is about.
+    const inside = w.add('hostile', door.x + door.w / 2, door.y - 60, 0, { inert: true });
     const hp = inside.hp;
 
     orders.stackOn([breacher], door, w.ctx);
@@ -449,7 +782,9 @@ function pace(t) {
     enemy.maxHp = 1e6;
     enemy.hp = 1e6;
     orders.cyclePace([sprinter]);
-    s.ctx.repath(sprinter, { x: OPEN.x, y: OPEN.y + 600 });
+    // Far enough that it is still running when the window closes: a unit that
+    // arrives stops sprinting, and then it is allowed to shoot again.
+    s.ctx.repath(sprinter, { x: OPEN.x + 600, y: OPEN.y });
     t.equal(s.countShots(1500, sprinter), 0, 'a sprinting unit does not shoot');
 
     // Creeping keeps a marksman set, which is the reason to order it.

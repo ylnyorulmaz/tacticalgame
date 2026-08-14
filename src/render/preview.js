@@ -4,6 +4,14 @@
 
 import { WORLD, COLORS } from '../config.js';
 
+const PREVIEW_TINTS = {
+    mud: 0x5c4326,
+    gravel: 0xa89a72,
+    rubble: 0x8a7f70,
+    grass: 0x1a7d0e,
+    high: 0x57b93c,
+};
+
 export function drawMapPreview(g, level, x, y, width, height) {
     const scale = Math.min(width / WORLD.width, height / WORLD.height);
     const offsetX = x + (width - WORLD.width * scale) / 2;
@@ -15,6 +23,23 @@ export function drawMapPreview(g, level, x, y, width, height) {
     g.fillRect(offsetX, offsetY, WORLD.width * scale, WORLD.height * scale);
 
     // Foliage as single blobs — at this size the layered version is mush.
+    // Ground first, so the thumbnail shows the same terrain the mission does.
+    for (const patch of level.terrain || []) {
+        const tint = PREVIEW_TINTS[patch.kind];
+        if (!tint) continue;
+        g.fillStyle(tint, 0.75);
+        g.fillRect(sx(patch.x), sy(patch.y), patch.w * scale, patch.h * scale);
+    }
+    for (const road of level.roads || []) {
+        g.lineStyle(Math.max(1.5, (road.width || 64) * scale), 0x7a6a4e, 0.9);
+        for (let i = 0; i < road.points.length - 1; i++) {
+            g.lineBetween(
+                sx(road.points[i].x), sy(road.points[i].y),
+                sx(road.points[i + 1].x), sy(road.points[i + 1].y),
+            );
+        }
+    }
+
     g.fillStyle(COLORS.treeBase, 0.9);
     for (const tree of level.trees) {
         g.fillCircle(sx(tree.x), sy(tree.y), Math.max(1.6, 30 * tree.scale * scale));

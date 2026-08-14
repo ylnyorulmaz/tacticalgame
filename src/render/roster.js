@@ -3,9 +3,12 @@
 // they are still breathing. Slots are click targets too.
 
 import { COLORS, DOWNED } from '../config.js';
+import { isVehicle } from '../systems/vehicles.js';
 import { GUN, drawWeapon } from './weapons.js';
 
-const SLOT = { width: 140, height: 56, gap: 8 };
+// Slots size themselves to the squad: six operators on most maps, eight when
+// there is an AT gunner and a tank along.
+const SLOT = { width: 140, minWidth: 104, height: 56, gap: 8 };
 
 export class Roster {
     constructor(scene) {
@@ -31,18 +34,22 @@ export class Roster {
 
     layout(squad) {
         const size = this.scene.scale.gameSize;
-        const total = squad.length * SLOT.width + (squad.length - 1) * SLOT.gap;
         const left = 20;
         const top = size.height - SLOT.height - 52;
+        // Leave the unit card its corner, then share what is left.
+        const available = Math.max(300, size.width - left - 300);
+        const width = Math.max(
+            SLOT.minWidth,
+            Math.min(SLOT.width, (available - (squad.length - 1) * SLOT.gap) / Math.max(1, squad.length)),
+        );
 
         this.slots = squad.map((unit, i) => ({
             unit,
-            x: left + i * (SLOT.width + SLOT.gap),
+            x: left + i * (width + SLOT.gap),
             y: top,
-            width: SLOT.width,
+            width,
             height: SLOT.height,
         }));
-        void total;
 
         this.ensureLabels(squad.length);
         this.slots.forEach((slot, i) => {
@@ -98,7 +105,8 @@ export class Roster {
                 g.lineBetween(glyphX + 8, glyphY - 8, glyphX - 8, glyphY + 8);
             }
 
-            labels.name.setText(`${i + 1} ${unit.stats.name}`);
+            const label = slot.width < 124 ? unit.stats.name.split(' ')[0] : unit.stats.name;
+            labels.name.setText(`${i + 1} ${label}`);
             labels.name.setColor(dead ? '#8b9a92' : '#ffffff');
 
             // Health, or the bleed-out clock for a casualty.
@@ -123,7 +131,21 @@ export class Roster {
             // Ammunition, drawn rather than written: a bar for the rounds in the
             // magazine and a tick per spare. Text here would fight the name and
             // the state tag for the same few pixels, and this reads faster.
-            if (!dead && Number.isFinite(unit.magSize)) {
+            if (!dead && isVehicle(unit)) {
+                // Three plates, thickest first: what the player needs to know is
+                // which side of this thing is the soft one.
+                const armour = unit.stats.vehicle.armour;
+                const facets = [armour.front, armour.side, armour.rear];
+                const thickest = Math.max(...facets);
+                facets.forEach((value, f) => {
+                    const bw = (barW - 12) / 3;
+                    const bx = barX + f * (bw + 6);
+                    g.fillStyle(0x000000, 0.6);
+                    g.fillRect(bx - 1, barY + 7, bw + 2, 5);
+                    g.fillStyle(f === 2 ? COLORS.hpCrit : f === 1 ? COLORS.hpLow : COLORS.hp, 1);
+                    g.fillRect(bx, barY + 8, bw * (value / thickest), 3);
+                });
+            } else if (!dead && Number.isFinite(unit.magSize)) {
                 const magW = barW * 0.62;
                 const ratio = Math.max(0, unit.mag / unit.magSize);
                 g.fillStyle(0x000000, 0.6);
@@ -162,6 +184,8 @@ function stateLabel(unit) {
     if (unit.order.suppressAt) return 'SUPPRESSING';
     if (unit.order.stance === 'hold') return 'WEAPONS TIGHT';
     if (unit.inCover > 0.35) return 'IN COVER';
+    if (unit.concealed) return 'CONCEALED';
+    if (unit.elevated) return 'HIGH GROUND';
     if (unit.target) return 'ENGAGING';
     if (unit.path) return unit.order.pace === 'sprint' ? 'SPRINTING' : 'MOVING';
     return 'HOLDING';
@@ -174,7 +198,8 @@ function stateColor(unit) {
     if (unit.reloadTimer > 0) return '#ffd24a';
     if (unit.order.stackAt) return '#7fd8ff';
     if (unit.order.suppressAt || unit.order.stance === 'hold') return '#ffd24a';
-    if (unit.inCover > 0.35) return '#7df07d';
+    if (unit.inCover > 0.35 || unit.concealed) return '#7df07d';
+    if (unit.elevated) return '#7fd8ff';
     if (unit.target || unit.breaching) return '#ffd24a';
     return '#cfe9ff';
 }

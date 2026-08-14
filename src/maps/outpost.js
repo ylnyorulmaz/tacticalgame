@@ -78,6 +78,10 @@ export function build() {
             { cls: 'medic', x: 590, y: 1312, facing: -Math.PI / 2 },
             { cls: 'grenadier', x: 660, y: 1280, facing: -Math.PI / 2 },
             { cls: 'breacher', x: 730, y: 1312, facing: -Math.PI / 2 },
+            { cls: 'antitank', x: 800, y: 1280, facing: -Math.PI / 2 },
+            // Ours. Cannot follow anyone into the huts, and its engine will
+            // wake the whole outpost the moment it moves.
+            { cls: 'tank', x: 900, y: 1330, facing: -Math.PI / 2 },
         ],
         hostiles: [
             // Sentry inside the north hut.
@@ -92,6 +96,9 @@ export function build() {
             { cls: 'hostile', x: 1900, y: 600, facing: Math.PI, route: [{ x: 1900, y: 600 }, { x: 1888, y: 1128 }] },
             // Overwatch behind the convoy.
             { cls: 'hostileHeavy', x: 1440, y: 380, facing: Math.PI / 2, route: null },
+            // Sitting on the road through the middle, covering the open ground
+            // the squad has to cross to reach the east hut.
+            { cls: 'hostileTank', x: 1400, y: 620, facing: Math.PI / 2, route: null },
             // Roams the western flank — the one that finds you first.
             { cls: 'hostileShotgun', x: 664, y: 756, facing: Math.PI / 2, route: [{ x: 664, y: 756 }, { x: 840, y: 1080 }] },
         ],
@@ -100,6 +107,23 @@ export function build() {
         reinforce: [{ x: 1200, y: 120 }, { x: 2280, y: 620 }],
         // Somebody is being held in the east hut, and a grenade through the
         // door kills them as dead as it kills the guard.
+        // Open ground, so the ground itself is the cover: a berm the marksman
+        // can shoot over, grass to cross the middle in, and mud that bogs
+        // anything heavy trying to swing round the west.
+        terrain: [
+            { kind: 'high', x: 980, y: 1020, w: 300, h: 180 },
+            { kind: 'high', x: 1840, y: 300, w: 240, h: 200 },
+            { kind: 'grass', x: 380, y: 560, w: 300, h: 520 },
+            { kind: 'grass', x: 1240, y: 620, w: 420, h: 300 },
+            { kind: 'grass', x: 700, y: 1140, w: 640, h: 240 },
+            { kind: 'mud', x: 240, y: 1060, w: 320, h: 320 },
+            { kind: 'gravel', x: 1480, y: 640, w: 360, h: 260 },
+            { kind: 'gravel', x: 660, y: 340, w: 380, h: 100 },
+        ],
+        roads: [
+            { width: 80, points: [{ x: 1200, y: 60 }, { x: 1260, y: 340 }, { x: 1420, y: 640 }, { x: 1560, y: 900 }] },
+            { width: 64, points: [{ x: 2260, y: 620 }, { x: 1860, y: 700 }, { x: 1560, y: 900 }] },
+        ],
         objectives: [
             { kind: 'rescue', x: 1620, y: 850, label: 'Reach the hostage' },
             { kind: 'exfil', x: 400, y: 1230, w: 380, h: 130, label: 'Walk them out' },

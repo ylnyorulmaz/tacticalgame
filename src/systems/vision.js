@@ -6,8 +6,8 @@
 // on top of the terrain: a persistent "explored" texture that is permanently
 // erased where the squad has been, and a per-frame "currently visible" texture.
 
-import { WORLD, FOG } from '../config.js';
-import { sightBlockingRects } from '../level.js';
+import { WORLD, FOG, SURFACES, CONCEAL, ELEVATION } from '../config.js';
+import { wallRects, lowRects, rectContains } from '../level.js';
 
 function rectToSegments(rect, out) {
     const { x, y, w, h } = rect;
@@ -22,13 +22,28 @@ function rectToSegments(rect, out) {
 // at these radii.
 const CLOUD_SIDES = 12;
 
+// Four occluder sets, because "what stops this" has four different answers:
+//
+//   walls    walls and shut doors. Stop bullets, stop everyone's sight.
+//   low      crates, wrecks, hedges. Stop bullets, stop sight from the ground —
+//            but not from up on a berm.
+//   dynamic  smoke. Blocks nothing solid, blocks every view, and is tall enough
+//            that standing on a berm does not help.
+//
+// Concealment — tall grass — is deliberately *not* a fourth occluder set. It is
+// a property of the ground somebody is standing on: you can see the field, you
+// just cannot pick a man out of it past a certain range. Modelling it as
+// segments meant the fog showed a field as plainly visible while acquisition
+// insisted nothing in it could be seen, which is the picture lying to the
+// player. This way there is one rule and both agree with it.
 export class VisionSystem {
     constructor(level) {
         this.level = level;
-        this.segments = [];
-        // Occluders that come and go — smoke, so far. Kept apart from the static
-        // soup because bullets ignore them and eyes do not.
+        this.walls = [];
+        this.low = [];
         this.dynamic = [];
+        this.high = [];         // raised ground, as plain rects
+        this.concealing = [];   // tall grass, as plain rects
         this.refreshSegments();
     }
 
@@ -55,42 +70,109 @@ export class VisionSystem {
         this.dynamic = segments;
     }
 
-    // Called whenever a door opens: the blocker set changes, nothing else does.
+    // Called whenever the world's blockers change: a door opening, a crate being
+    // blown apart. Terrain does not change, but it is cheap to rebuild with it.
     refreshSegments() {
-        const segments = [];
-        for (const rect of sightBlockingRects(this.level)) rectToSegments(rect, segments);
-        rectToSegments({ x: 0, y: 0, w: WORLD.width, h: WORLD.height }, segments);
-        for (const seg of segments) measured(seg);
-        this.segments = segments;
+        this.walls = [];
+        for (const rect of wallRects(this.level)) rectToSegments(rect, this.walls);
+        rectToSegments({ x: 0, y: 0, w: WORLD.width, h: WORLD.height }, this.walls);
+
+        this.low = [];
+        for (const rect of lowRects(this.level)) rectToSegments(rect, this.low);
+
+        this.high = [];
+        this.concealing = [];
+        for (const patch of this.level.terrain || []) {
+            const kind = SURFACES[patch.kind];
+            if (!kind) continue;
+            if (kind.conceals) this.concealing.push(patch);
+            if (kind.elevated) this.high.push(patch);
+        }
+
+        for (const list of [this.walls, this.low]) {
+            for (const seg of list) measured(seg);
+        }
     }
 
-    // Walked once per unit per frame, so it iterates both lists rather than
+    // Is this spot raised? Cheap enough to ask per sight test: maps carry a
+    // couple of these at most, and the common case exits on the length check.
+    elevatedAt(x, y) {
+        for (const patch of this.high) {
+            if (rectContains(patch, x, y)) return true;
+        }
+        return false;
+    }
+
+    // Is somebody standing here hidden by the ground they are in?
+    concealedAt(x, y) {
+        for (const patch of this.concealing) {
+            if (rectContains(patch, x, y)) return true;
+        }
+        return false;
+    }
+
+    // How far a unit can see from where it is standing.
+    sightRadius(unit) {
+        const base = unit.stats.sight;
+        return this.elevatedAt(unit.x, unit.y) ? base * ELEVATION.sightBonus : base;
+    }
+
+    // Walked once per unit per frame, so it iterates the lists rather than
     // concatenating them — copying the whole static soup here was costing more
     // than the smoke it was copying it for.
-    segmentsNear(x, y, radius) {
+    segmentsNear(x, y, radius, overLow = false) {
         const near = [];
-        for (const list of [this.segments, this.dynamic]) {
+        const gather = (list) => {
             for (const seg of list) {
                 if (seg.maxX < x - radius || seg.minX > x + radius) continue;
                 if (seg.maxY < y - radius || seg.minY > y + radius) continue;
                 near.push(seg);
             }
-        }
+        };
+
+        gather(this.walls);
+        if (!overLow) gather(this.low);
+        gather(this.dynamic);   // smoke is tall; a berm does not help
         return near;
     }
 
     // True when nothing *solid* stands between the two points. This is the
-    // bullet's question: rounds and blast go through smoke.
+    // bullet's question: rounds and blast go through smoke and grass, and stop
+    // on walls and crates.
     hasLineOfSight(ax, ay, bx, by) {
-        return this.clear(this.segments, ax, ay, bx, by);
+        if (!this.clear(this.walls, ax, ay, bx, by)) return false;
+        return this.clear(this.low, ax, ay, bx, by);
     }
 
-    // True when nothing blocks the *view* — walls, shut doors, crates, and any
-    // smoke hanging in between. This is the eye's question, and it is what
-    // acquisition, the hostile brain and the fog all ask.
-    canObserve(ax, ay, bx, by) {
-        if (!this.clear(this.segments, ax, ay, bx, by)) return false;
-        return this.dynamic.length === 0 || this.clear(this.dynamic, ax, ay, bx, by);
+    // True when nothing blocks the *view*. This is the eye's question, and it is
+    // what acquisition, the hostile brain and the fog all ask. Two rules make it
+    // different from the bullet's:
+    //
+    //  - concealment only hides at range, so a short line ignores grass entirely;
+    //  - either end being on raised ground looks over everything chest-high.
+    canObserve(ax, ay, bx, by, opts) {
+        if (!this.clear(this.walls, ax, ay, bx, by)) return false;
+
+        const overLow = this.high.length > 0
+            && (this.elevatedAt(ax, ay) || this.elevatedAt(bx, by));
+        if (!overLow && !this.clear(this.low, ax, ay, bx, by)) return false;
+        if (this.dynamic.length > 0 && !this.clear(this.dynamic, ax, ay, bx, by)) return false;
+
+        // Ground cover at the far end: close up you can pick somebody out of it,
+        // at range you cannot. Looking down from a berm beats it.
+        if (overLow || this.concealing.length === 0) return true;
+        if (opts && opts.ignoreConcealment) return true;
+        if (Math.hypot(bx - ax, by - ay) <= CONCEAL.seeInto) return true;
+        return !this.concealedAt(bx, by);
+    }
+
+    // Seeing a *unit*, which is not quite the same question as seeing a point:
+    // long grass hides a man lying in it and does nothing whatever to hide a
+    // tank parked in it.
+    canSeeUnit(ax, ay, target) {
+        return this.canObserve(ax, ay, target.x, target.y, {
+            ignoreConcealment: !!target.stats.vehicle,
+        });
     }
 
     clear(segments, ax, ay, bx, by) {
@@ -108,8 +190,18 @@ export class VisionSystem {
     // Can `observer` (a unit) see the point? Radius first, then the expensive test.
     canSee(observer, x, y) {
         const dist = Math.hypot(x - observer.x, y - observer.y);
-        if (dist > observer.stats.sight) return false;
+        if (dist > this.sightRadius(observer)) return false;
         return this.canObserve(observer.x, observer.y, x, y);
+    }
+
+    // The same, for a unit rather than a patch of ground.
+    canAnySeeUnit(observers, target) {
+        for (const observer of observers) {
+            if (!observer.alive) continue;
+            if (Math.hypot(target.x - observer.x, target.y - observer.y) > this.sightRadius(observer)) continue;
+            if (this.canSeeUnit(observer.x, observer.y, target)) return true;
+        }
+        return false;
     }
 
     canAnySee(observers, x, y) {
@@ -120,9 +212,11 @@ export class VisionSystem {
         return false;
     }
 
-    // Visibility polygon as a flat [x0, y0, x1, y1, ...] list, ready for Graphics.
+    // Visibility polygon as a flat [x0, y0, x1, y1, ...] list, ready for
+    // Graphics. The fog is built from these, so it has to agree with canObserve
+    // about berms and grass or the picture will lie to the player.
     visibilityPolygon(x, y, radius) {
-        const segments = this.segmentsNear(x, y, radius);
+        const segments = this.segmentsNear(x, y, radius, this.elevatedAt(x, y));
         const angles = [];
 
         for (const seg of segments) {

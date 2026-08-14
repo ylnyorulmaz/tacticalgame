@@ -1,9 +1,10 @@
 // Unit model: stats, movement along a smoothed path, door breaching, damage and
 // death. Rendering lives in render/entities.js — a unit here is plain state.
 
-import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS } from '../config.js';
+import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS, SURFACES, FOOTSTEPS } from '../config.js';
 import { rectContains } from '../level.js';
 import { makeOrder, paceScale, staysSet } from './orders.js';
+import { isVehicle, armourAt } from './vehicles.js';
 import { settings } from './settings.js';
 
 let nextId = 1;
@@ -17,9 +18,12 @@ export class Unit {
         this.x = x;
         this.y = y;
         this.spawn = { x, y };
-        this.radius = UNIT_RADIUS;
+        this.radius = this.stats.radius ?? UNIT_RADIUS;
         this.facing = facing;
         this.aimAngle = facing;
+        // Vehicles aim with the turret and drive with the hull; for everyone
+        // else the two are the same thing.
+        this.turretAngle = facing;
         this.maxHp = this.stats.hp;
         this.hp = this.maxHp;
         this.alive = true;
@@ -49,6 +53,10 @@ export class Unit {
         // empty the whole class's pouch.
         this.kit = { frag: 0, smoke: 0, flash: 0, charge: 0, ...(this.stats.kit || {}) };
         this.grenadeTimer = 0;
+        // A main gun — a tank's or an AT gunner's launcher — runs on its own
+        // timer and its own small stock of rounds.
+        this.mainGunTimer = 0;
+        this.mainGunRounds = this.stats.mainGun ? (this.stats.mainGun.rounds ?? Infinity) : 0;
         // Flashbanged: cannot see, cannot shoot, and the brain treats it as
         // being pinned.
         this.blinded = 0;
@@ -66,6 +74,7 @@ export class Unit {
         // How long this unit has been standing still (the marksman needs to be
         // set before firing) and how much incoming fire is pinning it down.
         this.stationaryFor = 0;
+        this.stepTimer = 0;      // counts down to the next audible footfall
         this.suppression = 0;
         this.pinned = false;
         this.inCover = 0;        // 0..1, maintained by systems/cover.js
@@ -111,10 +120,20 @@ export class Unit {
         return !!this.path && this.pathIndex < this.path.length && !this.breaching;
     }
 
-    takeDamage(amount) {
-        if (!this.alive) return;
+    // `opts.penetration` and `opts.angle` describe what hit it and from where.
+    // Armour only exists for vehicles, and damage with no penetration stated at
+    // all is treated as going straight through — that is scripted damage, not a
+    // weapon, and it should do what it says.
+    //
+    // Returns whether the hit actually did anything, so the caller can report a
+    // ricochet instead of a hit.
+    takeDamage(amount, opts = {}) {
+        if (!this.alive) return false;
+        if (isVehicle(this) && opts.penetration !== undefined) {
+            if (opts.penetration < armourAt(this, opts.angle ?? this.facing)) return false;
+        }
         this.hp -= amount;
-        if (this.hp > 0) return;
+        if (this.hp > 0) return true;
 
         this.hp = 0;
         this.alive = false;
@@ -124,12 +143,14 @@ export class Unit {
         this.dropAngle = this.facing + (Math.random() - 0.5) * 1.4;
         this.dropOffset = { x: Math.cos(this.dropAngle) * 22, y: Math.sin(this.dropAngle) * 22 };
 
-        // Squadmates go down rather than out, giving the medic a window.
-        if (this.isFriendly) {
+        // Squadmates go down rather than out, giving the medic a window. A
+        // knocked-out vehicle is simply knocked out.
+        if (this.isFriendly && !isVehicle(this)) {
             this.downed = true;
             this.bleedOut = DOWNED.bleedOut;
             this.reviveProgress = 0;
         }
+        return true;
     }
 
     heal(amount) {
@@ -166,13 +187,14 @@ export class Unit {
         this.reloadTimer = 0;
     }
 
+    // Neither of these reaches a crew buttoned up inside armour.
     addSuppression(amount) {
-        if (!this.alive) return;
+        if (!this.alive || isVehicle(this)) return;
         this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
     }
 
     blind(ms) {
-        if (!this.alive) return;
+        if (!this.alive || isVehicle(this)) return;
         this.blinded = Math.max(this.blinded, ms);
     }
 
@@ -191,6 +213,7 @@ export class Unit {
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
+        this.mainGunTimer = Math.max(0, this.mainGunTimer - dt);
         this.blinded = Math.max(0, this.blinded - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
         if (this.reloadTimer > 0) {
@@ -230,6 +253,15 @@ export class Unit {
 
         this.moveAlongPath(dt, ctx);
         this.facing = turnToward(this.facing, this.desiredFacing(), (this.stats.turnSpeed * dt) / 1000);
+
+        // The hull points where it is driving; the turret points at the fight.
+        // Infantry have no turret, so the two are the same thing for them.
+        if (!isVehicle(this)) {
+            this.turretAngle = this.facing;
+            return;
+        }
+        const speed = (this.stats.vehicle.turretSpeed * dt) / 1000;
+        this.turretAngle = turnToward(this.turretAngle, this.desiredTurret(), speed);
     }
 
     // What this unit wants to be looking at, in priority order: its target, the
@@ -287,13 +319,58 @@ export class Unit {
         }
 
         this.travelAngle = Math.atan2(dy, dx);
-        const step = (this.stats.speed * paceScale(this) * dt) / 1000;
+        // Ground under this unit right now: mud is slow, gravel is loud.
+        const surface = ctx.nav ? ctx.nav.surfaceAtWorld(this.x, this.y) : SURFACES.plain;
+        this.reportFootsteps(dt, surface, ctx);
+        const step = (this.stats.speed * paceScale(this) * surface.speed * dt) / 1000;
         const nx = this.x + (dx / dist) * step;
         const ny = this.y + (dy / dist) * step;
 
-        // Move each axis on its own so units slide along walls instead of sticking.
-        if (!ctx.blocked(nx, this.y)) this.x = nx;
-        if (!ctx.blocked(this.x, ny)) this.y = ny;
+        // Move each axis on its own so units slide along walls instead of
+        // sticking. A vehicle asks about its own, wider footprint.
+        if (!ctx.blocked(nx, this.y, this)) this.x = nx;
+        if (!ctx.blocked(this.x, ny, this)) this.y = ny;
+    }
+
+    // Loud ground gives you away. Footfalls go into the same noise list gunfire
+    // uses, but marked quiet: they send a hostile looking, they do not tell it
+    // what it is looking for. Creeping makes none at all, which is finally a
+    // reason to order a careful pace rather than just a cost.
+    reportFootsteps(dt, surface, ctx) {
+        if (!ctx.noises) return;
+
+        // Tracks do not care what they are driving over and cannot be quietened.
+        // A running engine is loud enough to be the alarm all by itself, which is
+        // the price of taking a tank anywhere.
+        const vehicle = this.stats.vehicle;
+        const radius = vehicle ? vehicle.engineNoise : surface.noise * (FOOTSTEPS.paceScale[this.order.pace] ?? 1);
+        if (!radius) {
+            this.stepTimer = FOOTSTEPS.interval;
+            return;
+        }
+        this.stepTimer -= dt;
+        if (this.stepTimer > 0) return;
+        this.stepTimer = FOOTSTEPS.interval;
+        ctx.noises.push({
+            x: this.x,
+            y: this.y,
+            team: this.team,
+            time: ctx.now ?? 0,
+            loud: !!vehicle,
+            radius,
+        });
+    }
+
+    // Where the gun wants to be looking, which is not necessarily where the
+    // vehicle is going: a contact, the ground it was told to suppress, the last
+    // place it saw something, or the arc it was given.
+    desiredTurret() {
+        if (this.target && this.target.alive) return this.aimAngle;
+        const order = this.order;
+        if (order.suppressAt) return Math.atan2(order.suppressAt.y - this.y, order.suppressAt.x - this.x);
+        if (this.ai.lastKnown) return Math.atan2(this.ai.lastKnown.y - this.y, this.ai.lastKnown.x - this.x);
+        if (order.facing !== null) return order.facing;
+        return this.facing;
     }
 
     // Gentle shove so squadmates spread out instead of stacking on one pixel.
@@ -314,8 +391,8 @@ export class Unit {
             pushY += (dy / dist) * (min - dist) * 0.5;
         }
         if (pushX === 0 && pushY === 0) return;
-        if (!ctx.blocked(this.x + pushX, this.y)) this.x += pushX;
-        if (!ctx.blocked(this.x, this.y + pushY)) this.y += pushY;
+        if (!ctx.blocked(this.x + pushX, this.y, this)) this.x += pushX;
+        if (!ctx.blocked(this.x, this.y + pushY, this)) this.y += pushY;
     }
 }
 

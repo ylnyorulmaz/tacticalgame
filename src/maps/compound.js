@@ -85,6 +85,19 @@ export function build() {
         // to the north and the yard track to the east.
         reinforce: [{ x: 1240, y: 120 }, { x: 2240, y: 700 }],
         // The tutorial mission: one building, everyone in it.
+        // The approach: a gravel apron round the building that gives you away
+        // if you run across it, and tall grass down the tree line to creep up in.
+        terrain: [
+            { kind: 'gravel', x: 860, y: 200, w: 780, h: 520 },
+            { kind: 'gravel', x: 1000, y: 660, w: 200, h: 120 },
+            { kind: 'grass', x: 240, y: 900, w: 620, h: 300 },
+            { kind: 'grass', x: 1560, y: 940, w: 560, h: 260 },
+            { kind: 'mud', x: 1640, y: 600, w: 360, h: 220 },
+        ],
+        // Track in from the northern road, past the front door.
+        roads: [
+            { width: 68, points: [{ x: 1240, y: 60 }, { x: 1240, y: 300 }, { x: 1120, y: 560 }, { x: 1090, y: 700 }] },
+        ],
         objectives: [
             { kind: 'eliminate', label: 'Clear the compound' },
         ],

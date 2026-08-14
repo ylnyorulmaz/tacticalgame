@@ -123,6 +123,7 @@ export const UNIT_CLASSES = {
             radius: 96,
             damage: 70,
             speed: 470,
+            penetration: 20,    // enough for a tank's back plate, nothing more
         },
         kit: { frag: 4, smoke: 2 },
         bars: { Speed: 5, Firepower: 9, Survivability: 6, Range: 6 },
@@ -220,6 +221,104 @@ export const UNIT_CLASSES = {
         bars: { Speed: 3, Firepower: 7, Survivability: 7, Range: 6 },
         ability: 'Sustained fire pins hostiles',
     },
+    // The answer to armour. One tube, a long reload, and it has to be planted
+    // to fire — plus a backblast that hurts anyone standing behind it, so where
+    // it sets up is a real decision rather than a stat line.
+    antitank: {
+        id: 'antitank',
+        name: 'AT Gunner',
+        team: 'friendly',
+        hp: 95,
+        speed: 112,
+        sight: 470,
+        turnSpeed: 5.5,
+        breachTime: 1800,
+        // Sidearm: what it has once the tubes are gone, and all it has against
+        // infantry that gets close.
+        weapon: {
+            name: 'Sidearm',
+            sound: 'pdw',
+            damage: 8,
+            cooldown: 300,
+            spread: 0.11,
+            range: 210,
+            bulletSpeed: 1300,
+            burst: 3,
+            burstGap: 800,
+            magazine: 15,
+            spare: 5,
+            reloadTime: 1900,
+        },
+        // The launcher rides the same machinery as a tank's main gun.
+        mainGun: {
+            name: 'AT Launcher',
+            sound: 'atLaunch',
+            damage: 120,
+            radius: 90,
+            penetration: 80,
+            cooldown: 5200,
+            speed: 620,
+            range: 560,
+            minRange: 120,
+            spread: 0.02,
+            rounds: 4,
+            steadyTime: 500,        // has to be planted, like the marksman
+            backblast: { range: 90, arc: 0.7, damage: 45 },
+        },
+        kit: { smoke: 1 },
+        bars: { Speed: 4, Firepower: 10, Survivability: 4, Range: 7 },
+        ability: 'Kills armour · mind the backblast',
+    },
+    // The squad's own armour. Same rules as theirs, including the doorways it
+    // cannot fit through and the engine that gives the whole approach away.
+    tank: {
+        id: 'tank',
+        name: 'Tank',
+        team: 'friendly',
+        hp: 240,
+        speed: 68,
+        sight: 520,
+        turnSpeed: 1.2,
+        breachTime: 99999,
+        radius: 34,
+        vehicle: {
+            armour: { front: 60, side: 34, rear: 14 },
+            turretSpeed: 1.8,
+            engineNoise: 520,
+        },
+        weapon: {
+            name: 'Coaxial MG',
+            sound: 'mg',
+            damage: 6,
+            cooldown: 110,
+            spread: 0.14,
+            range: 430,
+            bulletSpeed: 1500,
+            burst: 12,
+            burstGap: 1500,
+            magazine: 250,
+            spare: 4,
+            reloadTime: 5000,
+            penetration: 0,
+        },
+        mainGun: {
+            name: '90 mm',
+            sound: 'mainGun',
+            damage: 95,
+            radius: 115,
+            penetration: 70,
+            cooldown: 4600,
+            speed: 900,
+            range: 700,
+            minRange: 150,
+            spread: 0.025,
+            rounds: 12,
+        },
+        suppressionPerHit: 22,
+        kit: { },
+        bars: { Speed: 2, Firepower: 10, Survivability: 10, Range: 9 },
+        ability: 'Armoured · cannot go indoors · very loud',
+    },
     // Not a fighter: carries nothing, shoots at nobody, and is not deliberately
     // targeted by either side. Stray rounds and blast are what kill them, which
     // is exactly why a frag is the wrong tool on a rescue.
@@ -272,6 +371,56 @@ export const UNIT_CLASSES = {
         },
         bars: { Speed: 4, Firepower: 5, Survivability: 4, Range: 6 },
         ability: 'Holds its assigned arc',
+    },
+    // Armour. Cannot fit through a doorway, which is what makes every building
+    // on a tank map worth running to, and cannot be suppressed or blinded.
+    hostileTank: {
+        id: 'hostileTank',
+        name: 'Tank',
+        team: 'hostile',
+        hp: 240,
+        speed: 64,
+        sight: 520,
+        turnSpeed: 1.1,
+        breachTime: 99999,
+        radius: 34,
+        vehicle: {
+            armour: { front: 60, side: 34, rear: 14 },
+            turretSpeed: 1.7,       // rad/s, independent of the hull
+            engineNoise: 520,       // tracks are audible a long way off
+        },
+        // Coaxial machine gun: what it uses on infantry it can see.
+        weapon: {
+            name: 'Coaxial MG',
+            sound: 'mg',
+            damage: 6,
+            cooldown: 110,
+            spread: 0.14,
+            range: 430,
+            bulletSpeed: 1500,
+            burst: 12,
+            burstGap: 1500,
+            magazine: 250,
+            spare: 4,
+            reloadTime: 5000,
+            penetration: 0,
+        },
+        // And the gun it uses on everything else, on its own slow timer.
+        mainGun: {
+            name: '90 mm',
+            sound: 'mainGun',
+            damage: 95,
+            radius: 115,
+            penetration: 70,
+            cooldown: 4600,
+            speed: 900,
+            range: 700,
+            minRange: 150,
+            spread: 0.025,
+        },
+        suppressionPerHit: 22,
+        bars: { Speed: 2, Firepower: 10, Survivability: 10, Range: 9 },
+        ability: 'Armoured — flank it or bring the launcher',
     },
     hostileShotgun: {
         id: 'hostileShotgun',
@@ -329,11 +478,56 @@ export const UNIT_CLASSES = {
     },
 };
 
+// What the ground itself does. Every cell of the nav grid carries one of these,
+// so where you walk costs time, makes noise, and (from the next block down)
+// hides you or lets you see over things.
+export const SURFACES = {
+    plain: { id: 0, cost: 1, speed: 1, noise: 0 },
+    mud: { id: 1, cost: 1.9, speed: 0.55, noise: 0 },
+    gravel: { id: 2, cost: 1, speed: 0.95, noise: 280 },
+    rubble: { id: 3, cost: 1.7, speed: 0.6, noise: 320, cover: 0.5 },
+    grass: { id: 4, cost: 1.15, speed: 0.85, noise: 0, conceals: true },
+    high: { id: 5, cost: 1.25, speed: 0.9, noise: 0, elevated: true },
+};
+
+// Indexed by the `id` above, so the nav grid can store one byte per cell and
+// still answer "how fast, how loud, how expensive" without a lookup by name.
+export const SURFACE_BY_ID = Object.values(SURFACES).sort((a, b) => a.id - b.id);
+
+// Concealment is not cover: tall grass hides you without stopping anything.
+// The rule that keeps it from being a wall is a range one — you can see into
+// the edge of a field, you cannot see across it.
+export const CONCEAL = { seeInto: 150 };
+
+// Raised ground: you look over chest-high cover from up here, and a little
+// further besides. It cuts both ways — everyone else can see you over it too.
+export const ELEVATION = { sightBonus: 1.15 };
+
+export const FOOTSTEPS = {
+    interval: 420,          // ms between footfalls loud enough to report
+    paceScale: { normal: 1, sprint: 1.45, careful: 0 },
+};
+
+// Armour is about angles, not hit points. Front plate shrugs off nearly
+// everything, the sides are weaker and the back is soft, so the answer to a tank
+// is to get round it — or to bring the launcher that does not care.
+//
+//                     penetration   vs front 60   vs side 34   vs rear 14
+//   rifles, MG, buck        0            –             –            –
+//   frag grenade           20            –             –            ✔
+//   breaching charge       45            –             ✔            ✔
+//   tank main gun          70            ✔             ✔            ✔
+//   AT rocket              80            ✔             ✔            ✔
+export const ARMOUR = {
+    frontArc: 1.15,     // rad either side of the nose that counts as front
+    rearArc: 1.15,      // and either side of the tail
+};
+
 // Throwables and door charges. Smoke is the odd one out: it stops sight without
 // stopping a bullet, which is exactly what makes it worth carrying — you can
 // cross open ground behind it, and so can they.
 export const TOOLS = {
-    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200 },
+    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200, penetration: 20 },
     smoke: {
         radius: 104,
         speed: 430,
@@ -351,6 +545,7 @@ export const TOOLS = {
     charge: {
         radius: 120,
         damage: 55,
+        penetration: 45,
         placeTime: 700,     // ms to set it on the door
         fuse: 1400,         // ms from set to bang
     },
@@ -413,7 +608,7 @@ export const RATING = {
 // decision with a cost: a second team walks in.
 export const ALARM = {
     reinforceDelay: 9000,       // ms from the alarm going up to the wave arriving
-    wave: ['hostile', 'hostileShotgun', 'hostile'],
+    wave: ['hostile', 'hostileShotgun', 'hostileTank'],
     suppressedHearingScale: 0.35,   // how far a suppressed shot carries
 };
 

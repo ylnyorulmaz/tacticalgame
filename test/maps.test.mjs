@@ -7,7 +7,10 @@
 import { MAPS, buildMap } from '../src/maps/index.js';
 import { NavGrid } from '../src/systems/nav.js';
 import { staticSolidRects, rectContains } from '../src/level.js';
-import { WORLD } from '../src/config.js';
+import { WORLD, SURFACES, UNIT_CLASSES, ALARM } from '../src/config.js';
+
+// Matches GameScene's vehicle grid.
+const VEHICLE_RADIUS = 34;
 
 export const name = 'maps';
 
@@ -68,6 +71,65 @@ export function run(t) {
         }
         t.ok((level.reinforce || []).length > 0, `${label}: has reinforcement entry points`);
         t.empty(badEntries, `${label}: reinforcements can actually walk in`);
+
+        // Terrain that sits off the map, or entirely inside a wall, is data
+        // nobody will ever walk on.
+        const badTerrain = [];
+        for (const patch of level.terrain || []) {
+            const where = `${patch.kind} at ${patch.x},${patch.y}`;
+            if (!SURFACES[patch.kind]) badTerrain.push(`${where} is not a known surface`);
+            else if (patch.w <= 0 || patch.h <= 0) badTerrain.push(`${where} has no area`);
+            else if (patch.x < 0 || patch.y < 0
+                || patch.x + patch.w > WORLD.width || patch.y + patch.h > WORLD.height) {
+                badTerrain.push(`${where} runs off the map`);
+            } else if (!nav.findPath(from.x, from.y, patch.x + patch.w / 2, patch.y + patch.h / 2)) {
+                badTerrain.push(`${where} cannot be reached`);
+            }
+        }
+        t.empty(badTerrain, `${label}: terrain patches are on the map and walkable`);
+
+        // A road is a promise about where traffic comes from, so its ends should
+        // be somewhere a unit could actually be.
+        const badRoads = [];
+        for (const road of level.roads || []) {
+            if (!road.points || road.points.length < 2) {
+                badRoads.push('a road with fewer than two points');
+                continue;
+            }
+            for (const point of road.points) {
+                if (point.x < 0 || point.y < 0 || point.x > WORLD.width || point.y > WORLD.height) {
+                    badRoads.push(`road point ${point.x},${point.y} is off the map`);
+                }
+            }
+        }
+        t.empty(badRoads, `${label}: roads stay on the map`);
+
+        // Armour routes on its own, wider grid. A tank parked somewhere it
+        // cannot move, or cut off from the ground it is meant to threaten, is a
+        // tank that never does anything.
+        const vehicleNav = new NavGrid(level, { radius: VEHICLE_RADIUS, doorsPassable: false });
+        const armour = level.hostiles.filter((h) => UNIT_CLASSES[h.cls] && UNIT_CLASSES[h.cls].vehicle);
+        const waveHasArmour = ALARM.wave.some((cls) => UNIT_CLASSES[cls] && UNIT_CLASSES[cls].vehicle);
+        const badArmour = [];
+        for (const spec of armour) {
+            const where = `${spec.cls} at ${spec.x},${spec.y}`;
+            if (vehicleNav.isBlockedWorld(spec.x, spec.y)) badArmour.push(`${where} is wedged`);
+            else if (!vehicleNav.findPath(spec.x, spec.y, level.cameraStart.x, level.cameraStart.y)) {
+                badArmour.push(`${where} cannot reach the approach`);
+            }
+        }
+        t.empty(badArmour, `${label}: armour can move and reach the fight`);
+
+        // The wave brings a tank, so the entries have to admit one.
+        if (waveHasArmour) {
+            const badArmourEntries = (level.reinforce || []).filter(
+                (entry) => vehicleNav.isBlockedWorld(entry.x, entry.y),
+            );
+            t.empty(
+                badArmourEntries.map((e) => `entry at ${e.x},${e.y} is too tight for armour`),
+                `${label}: reinforcement entries admit a tank`,
+            );
+        }
 
         const badRoutes = [];
         for (const hostile of level.hostiles) {

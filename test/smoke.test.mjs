@@ -82,7 +82,9 @@ export async function run(t, { chromium }) {
             };
         });
         t.equal(state.map, 'warehouse', 'the chosen map is the one that loads');
-        t.equal(state.squad, 6, 'six operators deploy');
+        // Seven on the warehouse: the AT gunner comes along wherever there is
+        // armour on the map.
+        t.equal(state.squad, 7, 'the squad deploys at full strength');
         t.ok(state.hostiles >= 6, `the garrison is present (${state.hostiles})`);
         t.ok(state.hudActive, 'the HUD comes up with the mission');
         t.ok(state.audio, 'the sound bank loaded');
