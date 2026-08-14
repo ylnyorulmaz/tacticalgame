@@ -69,7 +69,8 @@ export class InputController {
         keys.on('keydown-ENTER', () => scene.orderGo());
         keys.on('keydown-R', () => scene.restartMission());
         keys.on('keydown-M', () => scene.audio.toggleMute());
-        const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'];
+        // Eight, because a squad with an AT gunner and a tank attached is eight.
+        const numberKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT'];
         for (let i = 1; i <= numberKeys.length; i++) {
             keys.on(`keydown-${numberKeys[i - 1]}`, (event) => {
                 const unit = scene.squad[i - 1];

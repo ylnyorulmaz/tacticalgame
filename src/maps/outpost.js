@@ -78,6 +78,10 @@ export function build() {
             { cls: 'medic', x: 590, y: 1312, facing: -Math.PI / 2 },
             { cls: 'grenadier', x: 660, y: 1280, facing: -Math.PI / 2 },
             { cls: 'breacher', x: 730, y: 1312, facing: -Math.PI / 2 },
+            { cls: 'antitank', x: 800, y: 1280, facing: -Math.PI / 2 },
+            // Ours. Cannot follow anyone into the huts, and its engine will
+            // wake the whole outpost the moment it moves.
+            { cls: 'tank', x: 900, y: 1330, facing: -Math.PI / 2 },
         ],
         hostiles: [
             // Sentry inside the north hut.

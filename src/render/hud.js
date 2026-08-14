@@ -88,7 +88,7 @@ export class HudScene extends Phaser.Scene {
         this.gradeNote = label(VIEW.width / 2, VIEW.height / 2 + 58, 16, 0.5, '#cfe9ff');
         this.gradeNote.setOrigin(0.5, 0.5);
 
-        this.hintText.setText('LMB select · RMB move, drag to set facing (Shift queues) · SPACE pause and plan · Tab / 1-6 select · WASD/wheel camera · M mute · R restart');
+        this.hintText.setText('LMB select · RMB move, drag to set facing (Shift queues) · SPACE pause and plan · Tab / 1-8 select · WASD/wheel camera · M mute · R restart');
 
         // Objective tracker, under the order palette.
         this.objectiveLabels = [];
@@ -281,6 +281,21 @@ export class HudScene extends Phaser.Scene {
         this.gfx.fillCircle(glyphX, glyphY, r);
         drawWeapon(this.gfx, gunX, gunY, angle, glyph, scale);
         if (glyph.icon === 'cross') drawCrossIcon(this.gfx, { x: glyphX, y: glyphY }, 1.15);
+
+        // Armour, for anything that has it: which plate is thick and which is
+        // the way in. The player needs this to know where to send the breacher.
+        if (cls.vehicle) {
+            const armour = cls.vehicle.armour;
+            const thickest = Math.max(armour.front, armour.side, armour.rear);
+            [['FRONT', armour.front], ['SIDE', armour.side], ['REAR', armour.rear]]
+                .forEach(([, value], row) => {
+                    const y = glyphY + 26 + row * 12;
+                    this.gfx.fillStyle(0x000000, 0.5);
+                    this.gfx.fillRect(glyphX - 26, y, 56, 7);
+                    this.gfx.fillStyle(row === 2 ? COLORS.hpCrit : row === 1 ? COLORS.hpLow : COLORS.hp, 1);
+                    this.gfx.fillRect(glyphX - 25, y + 1, 54 * (value / thickest), 5);
+                });
+        }
 
         // Kit pips: one row per thing this class carries, spent ones hollowed
         // out, so you can see at a glance what is left to work with.

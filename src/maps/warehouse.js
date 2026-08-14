@@ -85,6 +85,8 @@ export function build() {
             { cls: 'grenadier', x: 970, y: 1262, facing: -Math.PI / 2 },
             { cls: 'medic', x: 1040, y: 1230, facing: -Math.PI / 2 },
             { cls: 'marksman', x: 1110, y: 1262, facing: -Math.PI / 2 },
+            // Brought along because there is armour in the yard.
+            { cls: 'antitank', x: 1180, y: 1230, facing: -Math.PI / 2 },
         ],
         hostiles: [
             // South-west bay: first contact through the loading door.

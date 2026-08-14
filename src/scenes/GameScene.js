@@ -2,12 +2,9 @@
 // Simulation only advances while unpaused; selection, orders, camera and drawing
 // always run, which is what makes the pausable real-time loop work.
 
-import { WORLD } from '../config.js';
+import { WORLD, UNIT_CLASSES } from '../config.js';
 import { buildMap, DEFAULT_MAP } from '../maps/index.js';
 import { NavGrid, CELL } from '../systems/nav.js';
-
-// Wide enough that no doorway on any map will take one.
-const VEHICLE_RADIUS = 34;
 import { VisionSystem, FogRenderer } from '../systems/vision.js';
 import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
@@ -23,6 +20,9 @@ import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
 import { buildGround, PropLayer, DecalLayer } from '../render/terrain.js';
 import { EntityRenderer } from '../render/entities.js';
+
+// Wide enough that no doorway on any map will take one.
+const VEHICLE_RADIUS = 34;
 
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -131,8 +131,11 @@ export class GameScene extends Phaser.Scene {
     // A reinforcement walking onto the map mid-mission. The arrays the systems
     // hold are the same ones, so pushing is enough — nothing needs rebuilding.
     spawnHostile(cls, x, y) {
-        const cell = this.nav.cellAtWorld(x, y);
-        const open = this.nav.nearestOpen(cell.cx, cell.cy);
+        // Armour needs a spot wide enough for armour, or the wave arrives with a
+        // tank wedged in a gap it can never drive out of.
+        const grid = UNIT_CLASSES[cls] && UNIT_CLASSES[cls].vehicle ? this.vehicleNav : this.nav;
+        const cell = grid.cellAtWorld(x, y);
+        const open = grid.nearestOpen(cell.cx, cell.cy);
         const at = open ? { x: open.cx * CELL + CELL / 2, y: open.cy * CELL + CELL / 2 } : { x, y };
         const unit = new Unit({ cls, x: at.x, y: at.y, facing: Math.PI / 2 });
         this.hostiles.push(unit);

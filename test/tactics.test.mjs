@@ -142,6 +142,80 @@ export function run(t) {
     destructibleCover(t);
     armour(t);
     vehicleNavigation(t);
+    antiTank(t);
+    squadTank(t);
+}
+
+// The AT gunner is the reliable answer to armour, and the backblast is the
+// reason where it sets up is a decision.
+function antiTank(t) {
+    const w = world('outpost');
+    const gunner = w.add('antitank', OPEN.x, OPEN.y);
+    const tank = w.add('hostileTank', OPEN.x + 420, OPEN.y, 0);   // nose pointed away
+    t.ok(gunner.mainGunRounds > 0, 'the gunner deploys with rockets');
+
+    const rounds = gunner.mainGunRounds;
+    const hp = tank.hp;
+    w.run(9000);
+    t.ok(gunner.mainGunRounds < rounds, 'it uses the launcher on armour');
+    t.ok(tank.hp < hp, `and the launcher gets through (${Math.round(hp - tank.hp)} damage)`);
+
+    // Backblast: behind is dangerous, beside is not.
+    const b = world('outpost');
+    const shooter = b.add('antitank', OPEN.x, OPEN.y);
+    shooter.turretAngle = 0;
+    shooter.facing = 0;
+    const spec = UNIT_CLASSES.antitank.mainGun.backblast;
+    const behind = b.add('operator', OPEN.x - spec.range * 0.4, OPEN.y);
+    const beside = b.add('operator', OPEN.x, OPEN.y + spec.range * 0.4);
+    b.combat.fireMain(shooter, 0, b.units);
+    t.ok(behind.hp < behind.maxHp, 'standing behind the launcher hurts');
+    t.equal(beside.hp, beside.maxHp, 'standing beside it does not');
+
+    // Out of rockets, it is a man with a sidearm.
+    shooter.mainGunRounds = 0;
+    shooter.target = b.add('hostileTank', OPEN.x + 300, OPEN.y);
+    t.ok(!b.combat.mayFireMain(shooter), 'an empty launcher does not fire');
+}
+
+// Our own tank obeys the same orders as everybody else, and pays the same
+// prices: it cannot go indoors, and its engine wakes the map.
+function squadTank(t) {
+    const w = world('outpost');
+    const spec = w.level.squad.find((u) => u.cls === 'tank');
+    t.ok(!!spec, 'the outpost sends a tank along');
+
+    // Open ground east of the huts: the tank's own spawn sits in tall grass,
+    // and a target standing in that is concealed rather than un-shootable.
+    const yard = { x: 1600, y: 1250 };
+    const tank = w.add('tank', yard.x, yard.y);
+    const enemy = w.add('hostile', yard.x + 300, yard.y, 0, { inert: true });
+    enemy.maxHp = 1e6;
+    enemy.hp = 1e6;
+
+    // Hold fire works on a tank exactly as it does on a rifleman.
+    orders.toggleHold([tank]);
+    t.equal(w.countShots(2500, tank), 0, 'a tank told to hold fire holds it');
+    orders.toggleHold([tank]);
+    t.ok(w.countShots(2500, tank) > 0, 'and opens up when released');
+
+    // The turret tracks the target while the hull stays where it was put.
+    const aimed = Math.abs(Math.atan2(
+        Math.sin(tank.turretAngle - tank.aimAngle),
+        Math.cos(tank.turretAngle - tank.aimAngle),
+    ));
+    t.ok(aimed < 0.2, 'the turret comes onto the target');
+
+    // Driving it is loud enough to be the alarm by itself.
+    const loud = world('outpost');
+    const ours = loud.add('tank', spec.x, spec.y);
+    loud.add('hostile', spec.x + 400, spec.y + 200, 0, { inert: true });
+    ours.setPath([{ x: spec.x + 200, y: spec.y }]);
+    loud.run(1200);
+    t.ok(
+        loud.ctx.noises.some((n) => n.loud && n.team === 'friendly'),
+        'a moving tank makes a noise that raises the alarm',
+    );
 }
 
 // Facing armour is the whole point of a tank: the front is a wall, the back is

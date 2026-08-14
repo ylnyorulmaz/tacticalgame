@@ -53,6 +53,10 @@ export class Unit {
         // empty the whole class's pouch.
         this.kit = { frag: 0, smoke: 0, flash: 0, charge: 0, ...(this.stats.kit || {}) };
         this.grenadeTimer = 0;
+        // A main gun — a tank's or an AT gunner's launcher — runs on its own
+        // timer and its own small stock of rounds.
+        this.mainGunTimer = 0;
+        this.mainGunRounds = this.stats.mainGun ? (this.stats.mainGun.rounds ?? Infinity) : 0;
         // Flashbanged: cannot see, cannot shoot, and the brain treats it as
         // being pinned.
         this.blinded = 0;
@@ -209,7 +213,7 @@ export class Unit {
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
-        this.mainGunTimer = Math.max(0, (this.mainGunTimer ?? 0) - dt);
+        this.mainGunTimer = Math.max(0, this.mainGunTimer - dt);
         this.blinded = Math.max(0, this.blinded - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
         if (this.reloadTimer > 0) {
@@ -249,7 +253,15 @@ export class Unit {
 
         this.moveAlongPath(dt, ctx);
         this.facing = turnToward(this.facing, this.desiredFacing(), (this.stats.turnSpeed * dt) / 1000);
-        if (!isVehicle(this)) this.turretAngle = this.facing;
+
+        // The hull points where it is driving; the turret points at the fight.
+        // Infantry have no turret, so the two are the same thing for them.
+        if (!isVehicle(this)) {
+            this.turretAngle = this.facing;
+            return;
+        }
+        const speed = (this.stats.vehicle.turretSpeed * dt) / 1000;
+        this.turretAngle = turnToward(this.turretAngle, this.desiredTurret(), speed);
     }
 
     // What this unit wants to be looking at, in priority order: its target, the
@@ -325,9 +337,14 @@ export class Unit {
     // what it is looking for. Creeping makes none at all, which is finally a
     // reason to order a careful pace rather than just a cost.
     reportFootsteps(dt, surface, ctx) {
-        if (!surface.noise || !ctx.noises) return;
-        const paceNoise = FOOTSTEPS.paceScale[this.order.pace] ?? 1;
-        if (paceNoise <= 0) {
+        if (!ctx.noises) return;
+
+        // Tracks do not care what they are driving over and cannot be quietened.
+        // A running engine is loud enough to be the alarm all by itself, which is
+        // the price of taking a tank anywhere.
+        const vehicle = this.stats.vehicle;
+        const radius = vehicle ? vehicle.engineNoise : surface.noise * (FOOTSTEPS.paceScale[this.order.pace] ?? 1);
+        if (!radius) {
             this.stepTimer = FOOTSTEPS.interval;
             return;
         }
@@ -339,9 +356,21 @@ export class Unit {
             y: this.y,
             team: this.team,
             time: ctx.now ?? 0,
-            loud: false,
-            radius: surface.noise * paceNoise,
+            loud: !!vehicle,
+            radius,
         });
+    }
+
+    // Where the gun wants to be looking, which is not necessarily where the
+    // vehicle is going: a contact, the ground it was told to suppress, the last
+    // place it saw something, or the arc it was given.
+    desiredTurret() {
+        if (this.target && this.target.alive) return this.aimAngle;
+        const order = this.order;
+        if (order.suppressAt) return Math.atan2(order.suppressAt.y - this.y, order.suppressAt.x - this.x);
+        if (this.ai.lastKnown) return Math.atan2(this.ai.lastKnown.y - this.y, this.ai.lastKnown.x - this.x);
+        if (order.facing !== null) return order.facing;
+        return this.facing;
     }
 
     // Gentle shove so squadmates spread out instead of stacking on one pixel.

@@ -59,7 +59,7 @@ export class CombatSystem {
             // A tank's main gun runs on its own timer, the way the grenadier's
             // arm does, and takes the shot when the coax is not the right answer.
             if (this.mayFireMain(unit)) {
-                this.fireMain(unit, now);
+                this.fireMain(unit, now, units);
                 continue;
             }
             if (!this.mayFire(unit)) continue;
@@ -114,7 +114,11 @@ export class CombatSystem {
             return;
         }
         // Standing on raised ground buys reach as well as a view over cover.
-        const reach = Math.min(this.vision.sightRadius(unit), unit.stats.weapon.range);
+        // A unit with a launcher or a main gun acquires out to *that* range —
+        // gating on the sidearm would leave an AT gunner unable to see the tank
+        // it is carrying the launcher for.
+        const armed = Math.max(unit.stats.weapon.range, unit.stats.mainGun ? unit.stats.mainGun.range : 0);
+        const reach = Math.min(this.vision.sightRadius(unit), armed);
         const current = unit.target;
         if (current && current.alive && this.inReach(unit, current, reach)) return;
 
@@ -155,7 +159,14 @@ export class CombatSystem {
         if (!this.canShoot(unit)) return false;
         // Hostiles wait for their reaction time; the AI raises this flag.
         if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
-        let error = unit.aimAngle - unit.facing;
+        // Nothing shoots past its own range: acquisition can now reach further
+        // than the primary weapon does.
+        if (unit.target) {
+            const dist = Math.hypot(unit.target.x - unit.x, unit.target.y - unit.y);
+            if (dist > unit.stats.weapon.range) return false;
+        }
+        // Lined up on the turret, which for infantry is the same as the body.
+        let error = unit.aimAngle - unit.turretAngle;
         error = Math.atan2(Math.sin(error), Math.cos(error));
         return Math.abs(error) <= AIM_TOLERANCE;
     }
@@ -171,7 +182,7 @@ export class CombatSystem {
 
         if (Math.hypot(point.x - unit.x, point.y - unit.y) > unit.stats.weapon.range) return;
         if (!this.canShoot(unit)) return;
-        let error = unit.aimAngle - unit.facing;
+        let error = unit.aimAngle - unit.turretAngle;
         error = Math.atan2(Math.sin(error), Math.cos(error));
         if (Math.abs(error) > AIM_TOLERANCE) return;
 
@@ -187,7 +198,12 @@ export class CombatSystem {
         const gun = unit.stats.mainGun;
         if (!gun || !unit.target) return false;
         if (unit.mainGunTimer > 0 || unit.breaching) return false;
+        if (unit.mainGunRounds <= 0) return false;
         if (unit.order.stance === 'hold') return false;
+        if (unit.pinned || unit.blinded > 0) return false;
+        if (isSprinting(unit)) return false;
+        // A launcher has to be planted, the same way the marksman's rifle does.
+        if (gun.steadyTime && unit.stationaryFor < gun.steadyTime) return false;
         if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
 
         const dist = Math.hypot(unit.target.x - unit.x, unit.target.y - unit.y);
@@ -201,7 +217,7 @@ export class CombatSystem {
         return Math.abs(error) <= AIM_TOLERANCE;
     }
 
-    fireMain(unit, now) {
+    fireMain(unit, now, units) {
         const gun = unit.stats.mainGun;
         const angle = unit.turretAngle + (Math.random() - 0.5) * 2 * gun.spread;
         const muzzleX = unit.x + Math.cos(unit.turretAngle) * (unit.radius + 26);
@@ -234,9 +250,36 @@ export class CombatSystem {
             unit: unit.id,
         });
         unit.mainGunTimer = gun.cooldown;
+        unit.mainGunRounds -= 1;
         unit.muzzleFlash = 140;
         unit.recoil = 1;
         this.noise(unit, now, true);
+        if (gun.backblast) this.backblast(unit, gun.backblast, units);
+    }
+
+    // Standing behind a launcher when it goes off is a mistake with a cost.
+    // This is why where the AT gunner sets up is a decision and not a detail.
+    backblast(unit, spec, units) {
+        const behind = unit.turretAngle + Math.PI;
+        for (const mate of units) {
+            if (mate === unit || !mate.alive || mate.team !== unit.team) continue;
+            const dist = Math.hypot(mate.x - unit.x, mate.y - unit.y);
+            if (dist > spec.range) continue;
+            const angle = Math.atan2(mate.y - unit.y, mate.x - unit.x);
+            const off = Math.abs(Math.atan2(Math.sin(angle - behind), Math.cos(angle - behind)));
+            if (off > spec.arc) continue;
+            mate.takeDamage(spec.damage * (1 - dist / spec.range));
+            this.events.push({
+                type: 'hit',
+                kind: 'hit',
+                x: mate.x,
+                y: mate.y,
+                angle: behind,
+                team: mate.team,
+                victim: mate.id,
+                by: unit.stats.name,
+            });
+        }
     }
 
     // A throw the player placed by hand. It waits for the arm to be free rather
@@ -328,8 +371,8 @@ export class CombatSystem {
 
     fire(unit, now, opts = {}) {
         const weapon = unit.stats.weapon;
-        const muzzleX = unit.x + Math.cos(unit.facing) * (unit.radius + 12);
-        const muzzleY = unit.y + Math.sin(unit.facing) * (unit.radius + 12);
+        const muzzleX = unit.x + Math.cos(unit.turretAngle) * (unit.radius + 12);
+        const muzzleY = unit.y + Math.sin(unit.turretAngle) * (unit.radius + 12);
         const pellets = weapon.pellets || 1;
         // A target tucked behind a barricade is harder to hit, on top of the
         // rounds the barricade itself eats.
@@ -338,7 +381,7 @@ export class CombatSystem {
         const suppression = opts.suppression ?? (unit.stats.suppressionPerHit || 0);
 
         for (let i = 0; i < pellets; i++) {
-            const angle = unit.facing + (Math.random() - 0.5) * 2 * spread;
+            const angle = unit.turretAngle + (Math.random() - 0.5) * 2 * spread;
             this.projectiles.push({
                 x: muzzleX,
                 y: muzzleY,
@@ -361,7 +404,7 @@ export class CombatSystem {
             kind: 'shot',
             x: muzzleX,
             y: muzzleY,
-            angle: unit.facing,
+            angle: unit.turretAngle,
             cls: unit.cls,
             unit: unit.id,
             suppressed: !!weapon.suppressed,

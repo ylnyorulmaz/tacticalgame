@@ -8,7 +8,6 @@
 // to fit through a door.
 
 import { AI, ARMOUR } from '../config.js';
-import { turnToward } from './units.js';
 
 export function isVehicle(unit) {
     return !!unit.stats.vehicle;
@@ -67,31 +66,8 @@ export function updateVehicle(unit, dt, ctx) {
         }
     }
 
-    // The turret tracks the target while the hull points where it is driving.
-    const wanted = brain.state === 'engage' || brain.state === 'search'
-        ? (brain.lastKnown
-            ? Math.atan2(brain.lastKnown.y - unit.y, brain.lastKnown.x - unit.x)
-            : unit.turretAngle)
-        : unit.facing;
-    unit.turretAngle = turnToward(unit.turretAngle, wanted, (unit.stats.vehicle.turretSpeed * dt) / 1000);
-
-    // Tracks are loud, and there is no creeping in a tank.
-    reportEngine(unit, dt, ctx);
-}
-
-function reportEngine(unit, dt, ctx) {
-    if (!unit.isMoving || !ctx.noises) return;
-    unit.engineTimer = (unit.engineTimer ?? 0) - dt;
-    if (unit.engineTimer > 0) return;
-    unit.engineTimer = 500;
-    ctx.noises.push({
-        x: unit.x,
-        y: unit.y,
-        team: unit.team,
-        time: ctx.now ?? 0,
-        loud: false,
-        radius: unit.stats.vehicle.engineNoise,
-    });
+    // The turret itself is driven by Unit.desiredTurret, so a tank the player is
+    // driving aims by exactly the same rules as one that is hunting them.
 }
 
 function nearestVisible(unit, ctx) {
