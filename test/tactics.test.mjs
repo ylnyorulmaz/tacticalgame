@@ -15,6 +15,7 @@ import * as orders from '../src/systems/orders.js';
 import { setSetting } from '../src/systems/settings.js';
 import { AlarmSystem, CALM, ALARMED } from '../src/systems/alarm.js';
 import { ObjectiveSystem, rateMission } from '../src/systems/objectives.js';
+import { isVehicle, armourFacet } from '../src/systems/vehicles.js';
 import { SUPPRESSION, UNIT_CLASSES, TOOLS, ALARM, SURFACES } from '../src/config.js';
 
 export const name = 'tactics';
@@ -139,6 +140,78 @@ export function run(t) {
     concealment(t);
     elevation(t);
     destructibleCover(t);
+    armour(t);
+    vehicleNavigation(t);
+}
+
+// Facing armour is the whole point of a tank: the front is a wall, the back is
+// not, and the answer is to get round it or bring the right weapon.
+function armour(t) {
+    const w = world('outpost');
+    const tank = w.add('hostileTank', OPEN.x + 400, OPEN.y, Math.PI);   // nose pointing west
+    t.ok(isVehicle(tank), 'a tank is a vehicle');
+    t.equal(armourFacet(tank, 0), 'front', 'a round travelling east hits the nose it is pointed at');
+    t.equal(armourFacet(tank, Math.PI), 'rear', 'one travelling west catches the back');
+    t.equal(armourFacet(tank, Math.PI / 2), 'side', 'and one from the flank hits the flank');
+
+    // Rifle fire does nothing from any angle.
+    const start = tank.hp;
+    for (const angle of [0, Math.PI / 2, Math.PI]) {
+        tank.takeDamage(40, { penetration: 0, angle });
+    }
+    t.equal(tank.hp, start, 'small arms do nothing to armour from any side');
+    t.ok(!tank.takeDamage(40, { penetration: 0, angle: 0 }), 'and the hit reports itself as stopped');
+
+    // A frag only ever hurts the back plate.
+    t.ok(!tank.takeDamage(50, { penetration: TOOLS.frag.penetration, angle: 0 }),
+        'a grenade cannot get through the front');
+    t.ok(tank.takeDamage(50, { penetration: TOOLS.frag.penetration, angle: Math.PI }),
+        'but it can get through the back');
+
+    // A charge gets in from the flank; the launcher gets in anywhere.
+    const flanked = w.add('hostileTank', OPEN.x + 700, OPEN.y, Math.PI);
+    t.ok(flanked.takeDamage(50, { penetration: TOOLS.charge.penetration, angle: Math.PI / 2 }),
+        'a breaching charge on the flank does the job');
+    t.ok(!flanked.takeDamage(50, { penetration: TOOLS.charge.penetration, angle: 0 }),
+        'the same charge on the front does not');
+
+    const anywhere = w.add('hostileTank', OPEN.x + 900, OPEN.y, Math.PI);
+    t.ok(anywhere.takeDamage(10, { penetration: 80, angle: 0 }), 'a launcher goes through the front');
+
+    // And a tank cannot be suppressed or blinded.
+    tank.addSuppression(500);
+    tank.blind(4000);
+    t.equal(tank.suppression, 0, 'a tank cannot be suppressed');
+    t.equal(tank.blinded, 0, 'and cannot be flashbanged');
+
+    // Killing it leaves a hulk rather than a body that can be revived.
+    const doomed = w.add('hostileTank', OPEN.x + 1100, OPEN.y);
+    doomed.takeDamage(9999);
+    t.ok(!doomed.alive && !doomed.downed, 'a knocked-out tank stays knocked out');
+}
+
+// A tank is too wide for a doorway, which is what makes a building somewhere to
+// run to rather than just somewhere to fight in.
+function vehicleNavigation(t) {
+    const w = world('warehouse');
+    const spec = w.level.hostiles.find((h) => h.cls === 'hostileTank');
+    t.ok(!!spec, 'the warehouse has a tank on it');
+
+    const vehicleNav = new NavGrid(w.level, { radius: 34, doorsPassable: false });
+    t.ok(!vehicleNav.isBlockedWorld(spec.x, spec.y), 'it starts somewhere it can actually sit');
+
+    // Inside the building: infantry can path there, armour cannot.
+    const inside = { x: 1200, y: 500 };
+    t.ok(!!w.nav.findPath(spec.x, spec.y, inside.x, inside.y), 'infantry can walk inside');
+    t.equal(vehicleNav.findPath(spec.x, spec.y, inside.x, inside.y), null,
+        'a tank cannot follow them in');
+
+    // But it can get to the extraction zone, which is the whole threat.
+    const zone = w.objectives.exfil;
+    t.ok(
+        !!vehicleNav.findPath(spec.x, spec.y, zone.x + zone.w / 2, zone.y + zone.h / 2),
+        'and it can reach the ground the squad has to exfil across',
+    );
 }
 
 // Cover is spent, not permanent. Blowing a crate apart has to change every

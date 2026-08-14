@@ -56,6 +56,12 @@ export class CombatSystem {
             if (!unit.target) continue;
 
             unit.aimAngle = Math.atan2(unit.target.y - unit.y, unit.target.x - unit.x);
+            // A tank's main gun runs on its own timer, the way the grenadier's
+            // arm does, and takes the shot when the coax is not the right answer.
+            if (this.mayFireMain(unit)) {
+                this.fireMain(unit, now);
+                continue;
+            }
             if (!this.mayFire(unit)) continue;
             // A grenade is worth more than a burst when the target is far
             // enough away and the squad is clear of the blast.
@@ -117,7 +123,7 @@ export class CombatSystem {
         for (const enemy of enemies) {
             const dist = Math.hypot(enemy.x - unit.x, enemy.y - unit.y);
             if (dist > reach || dist > bestDist) continue;
-            if (!this.vision.canObserve(unit.x, unit.y, enemy.x, enemy.y)) continue;
+            if (!this.vision.canSeeUnit(unit.x, unit.y, enemy)) continue;
             best = enemy;
             bestDist = dist;
         }
@@ -127,7 +133,7 @@ export class CombatSystem {
     inReach(unit, target, reach) {
         const dist = Math.hypot(target.x - unit.x, target.y - unit.y);
         if (dist > reach) return false;
-        return this.vision.canObserve(unit.x, unit.y, target.x, target.y);
+        return this.vision.canSeeUnit(unit.x, unit.y, target);
     }
 
     // Everything that stops a trigger being pulled regardless of what is being
@@ -173,6 +179,64 @@ export class CombatSystem {
             extraSpread: ORDERS.suppressSpread,
             suppression: Math.max(unit.stats.suppressionPerHit || 0, ORDERS.suppressSuppression),
         });
+    }
+
+    // The main gun is for armour and for anything a burst of coax will not fix.
+    // It aims with the turret, so a tank can shoot one way while driving another.
+    mayFireMain(unit) {
+        const gun = unit.stats.mainGun;
+        if (!gun || !unit.target) return false;
+        if (unit.mainGunTimer > 0 || unit.breaching) return false;
+        if (unit.order.stance === 'hold') return false;
+        if (!unit.isFriendly && unit.ai.state !== 'engage') return false;
+
+        const dist = Math.hypot(unit.target.x - unit.x, unit.target.y - unit.y);
+        if (dist < gun.minRange) return false;
+        // Armour is always worth a shell; infantry only at a range the coax
+        // cannot reach anyway.
+        if (!unit.target.stats.vehicle && dist < unit.stats.weapon.range * 0.75) return false;
+
+        let error = unit.aimAngle - unit.turretAngle;
+        error = Math.atan2(Math.sin(error), Math.cos(error));
+        return Math.abs(error) <= AIM_TOLERANCE;
+    }
+
+    fireMain(unit, now) {
+        const gun = unit.stats.mainGun;
+        const angle = unit.turretAngle + (Math.random() - 0.5) * 2 * gun.spread;
+        const muzzleX = unit.x + Math.cos(unit.turretAngle) * (unit.radius + 26);
+        const muzzleY = unit.y + Math.sin(unit.turretAngle) * (unit.radius + 26);
+
+        this.projectiles.push({
+            kind: 'shell',
+            x: muzzleX,
+            y: muzzleY,
+            px: muzzleX,
+            py: muzzleY,
+            vx: Math.cos(angle) * gun.speed,
+            vy: Math.sin(angle) * gun.speed,
+            radius: gun.radius,
+            damage: gun.damage,
+            penetration: gun.penetration,
+            team: unit.team,
+            owner: unit,
+            travelled: 0,
+            maxDist: 1400,
+        });
+
+        this.events.push({
+            type: gun.sound || 'mainGun',
+            kind: 'mainGun',
+            x: muzzleX,
+            y: muzzleY,
+            angle: unit.turretAngle,
+            cls: unit.cls,
+            unit: unit.id,
+        });
+        unit.mainGunTimer = gun.cooldown;
+        unit.muzzleFlash = 140;
+        unit.recoil = 1;
+        this.noise(unit, now, true);
     }
 
     // A throw the player placed by hand. It waits for the arm to be free rather
@@ -237,6 +301,7 @@ export class CombatSystem {
             aim: { x: target.x, y: target.y },
             radius: spec.radius,
             damage: spec.damage || 0,
+            penetration: spec.penetration,
             team: unit.team,
             owner: unit,
             travelled: 0,
@@ -282,6 +347,7 @@ export class CombatSystem {
                 vx: Math.cos(angle) * weapon.bulletSpeed,
                 vy: Math.sin(angle) * weapon.bulletSpeed,
                 damage: weapon.damage,
+                penetration: weapon.penetration || 0,
                 suppression,
                 team: unit.team,
                 owner: unit,
@@ -349,6 +415,26 @@ export class CombatSystem {
                 bullet.y += totalY / steps;
                 bullet.travelled += distance / steps;
 
+                if (bullet.kind === 'shell') {
+                    // Unlike a thrown grenade, a shell goes off on the first
+                    // thing it meets — geometry or a body.
+                    const struck = units.find((u) => u.alive && u.team !== bullet.team
+                        && Math.hypot(u.x - bullet.x, u.y - bullet.y) <= u.radius);
+                    if (struck || bullet.travelled >= bullet.maxDist || this.hitsGeometry(bullet.x, bullet.y)) {
+                        this.explode({
+                            x: bullet.x,
+                            y: bullet.y,
+                            radius: bullet.radius,
+                            damage: bullet.damage,
+                            penetration: bullet.penetration,
+                            team: bullet.team,
+                            sound: 'shellImpact',
+                        }, units);
+                        dead = true;
+                    }
+                    continue;
+                }
+
                 if (bullet.kind === 'grenade') {
                     // Grenades sail over heads and detonate where they land, or
                     // against the first wall they meet.
@@ -379,14 +465,21 @@ export class CombatSystem {
                     const distSq = dx * dx + dy * dy;
                     if (distSq <= unit.radius * unit.radius) {
                         if (bullet.suppression) unit.addSuppression(bullet.suppression);
+                        const angle = Math.atan2(bullet.vy, bullet.vx);
                         const standing = unit.alive;
-                        unit.takeDamage(bullet.damage);
+                        const bit = unit.takeDamage(bullet.damage, {
+                            penetration: bullet.penetration || 0,
+                            angle,
+                        });
+                        // A round that does not get through is still a round
+                        // that stops here, and it says so — a ricochet is how
+                        // the player learns the front plate is not the way in.
                         this.events.push({
-                            type: standing && !unit.alive ? 'down' : 'hit',
-                            kind: 'hit',
+                            type: !bit ? 'ricochet' : (standing && !unit.alive ? 'down' : 'hit'),
+                            kind: bit ? 'hit' : 'ricochet',
                             x: unit.x,
                             y: unit.y,
-                            angle: Math.atan2(bullet.vy, bullet.vx),
+                            angle,
                             team: unit.team,
                             victim: unit.id,
                             by: bullet.owner ? bullet.owner.stats.name : null,
@@ -428,6 +521,7 @@ export class CombatSystem {
             y: grenade.y,
             radius: grenade.radius,
             damage: grenade.damage,
+            penetration: grenade.penetration,
             team: grenade.team,
         }, units);
     }
@@ -444,7 +538,10 @@ export class CombatSystem {
             const falloff = 1 - dist / blast.radius;
             const scale = unit.team === blast.team ? BLAST_FRIENDLY_SCALE : 1;
             const standing = unit.alive;
-            unit.takeDamage(blast.damage * falloff * scale);
+            unit.takeDamage(blast.damage * falloff * scale, {
+                penetration: blast.penetration,
+                angle: Math.atan2(unit.y - blast.y, unit.x - blast.x),
+            });
             if (standing && !unit.alive) this.events.push({ type: 'down', x: unit.x, y: unit.y });
             unit.addSuppression(SUPPRESSION.threshold * falloff);
         }
@@ -514,6 +611,7 @@ export class CombatSystem {
             y: door.y + door.h / 2,
             radius: TOOLS.charge.radius,
             damage: TOOLS.charge.damage,
+            penetration: TOOLS.charge.penetration,
             team: 'friendly',
             sound: 'charge',
         }, units);

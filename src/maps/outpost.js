@@ -92,6 +92,9 @@ export function build() {
             { cls: 'hostile', x: 1900, y: 600, facing: Math.PI, route: [{ x: 1900, y: 600 }, { x: 1888, y: 1128 }] },
             // Overwatch behind the convoy.
             { cls: 'hostileHeavy', x: 1440, y: 380, facing: Math.PI / 2, route: null },
+            // Sitting on the road through the middle, covering the open ground
+            // the squad has to cross to reach the east hut.
+            { cls: 'hostileTank', x: 1400, y: 620, facing: Math.PI / 2, route: null },
             // Roams the western flank — the one that finds you first.
             { cls: 'hostileShotgun', x: 664, y: 756, facing: Math.PI / 2, route: [{ x: 664, y: 756 }, { x: 840, y: 1080 }] },
         ],

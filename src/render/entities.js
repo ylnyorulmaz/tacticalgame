@@ -5,6 +5,7 @@
 // in rooms nobody has entered, while live units and order lines sit above it.
 
 import { COLORS, SUPPRESSION, DOWNED } from '../config.js';
+import { isVehicle } from '../systems/vehicles.js';
 import { GUN, drawWeapon, drawMuzzleFlash, gunAnchor, muzzleReach, fillRotatedRect } from './weapons.js';
 
 export { GUN, fillRotatedRect };
@@ -72,6 +73,10 @@ export class EntityRenderer {
 
         for (const unit of units) {
             if (unit.alive) continue;
+            if (isVehicle(unit)) {
+                drawHulk(ground, unit);
+                continue;
+            }
             drawCorpse(ground, unit);
             // A casualty is still savable, so it gets a live marker above the fog.
             if (unit.downed) drawDownedMarker(overlay, unit, state.time);
@@ -79,13 +84,14 @@ export class EntityRenderer {
 
         for (const unit of units) {
             if (!unit.alive) continue;
-            const onScreen = unit.isFriendly || visible(unit.x, unit.y);
+            const onScreen = unit.isFriendly || vision.canAnySeeUnit(friendlies, unit);
             if (!onScreen) {
                 if (unit.lastKnownToPlayer) drawGhost(overlay, unit.lastKnownToPlayer);
                 continue;
             }
             unit.lastKnownToPlayer = { x: unit.x, y: unit.y };
             if (unit.stats.noncombatant) drawHostage(top, unit, state.time);
+            else if (isVehicle(unit)) drawVehicle(top, fx, unit);
             else drawUnit(top, fx, unit);
             if (unit.selected) drawSelection(overlay, unit);
             if (unit.hp < unit.maxHp) drawHealthBar(overlay, unit);
@@ -304,6 +310,76 @@ function drawHoldMark(g, unit) {
         g.arc(unit.x, unit.y, unit.radius + 6, from, from + Math.PI / 2 - gap);
         g.strokePath();
     }
+}
+
+// A tank: hull pointing where it drives, tracks either side, and a turret that
+// points wherever it is shooting. The two angles being different is the whole
+// reason flanking a moving one is possible.
+function drawVehicle(g, flashLayer, unit) {
+    const body = unit.isFriendly ? COLORS.friendly : COLORS.hostile;
+    const len = unit.radius * 2.1;
+    const wide = unit.radius * 1.5;
+
+    // Tracks, drawn under and slightly wider than the hull.
+    g.fillStyle(0x1b1f22, 1);
+    fillRotatedRect(g, unit.x, unit.y, len * 1.02, wide + 13, unit.facing);
+
+    g.fillStyle(body, 1);
+    fillRotatedRect(g, unit.x, unit.y, len, wide, unit.facing);
+    // Glacis: a darker wedge at the nose, so front and back are never confused.
+    g.fillStyle(0x000000, 0.28);
+    fillRotatedRect(
+        g,
+        unit.x + Math.cos(unit.facing) * len * 0.34,
+        unit.y + Math.sin(unit.facing) * len * 0.34,
+        len * 0.3,
+        wide,
+        unit.facing,
+    );
+
+    // Turret and barrel, on their own bearing.
+    g.fillStyle(0x000000, 0.22);
+    g.fillCircle(unit.x, unit.y, unit.radius * 0.78);
+    g.fillStyle(body, 1);
+    g.fillCircle(unit.x, unit.y, unit.radius * 0.66);
+    g.fillStyle(COLORS.gun, 1);
+    fillRotatedRect(
+        g,
+        unit.x + Math.cos(unit.turretAngle) * unit.radius * 1.05,
+        unit.y + Math.sin(unit.turretAngle) * unit.radius * 1.05,
+        unit.radius * 1.5,
+        7,
+        unit.turretAngle,
+    );
+
+    if (unit.muzzleFlash > 0) {
+        const reach = unit.radius * 1.9;
+        drawMuzzleFlash(
+            flashLayer,
+            unit.x + Math.cos(unit.turretAngle) * reach,
+            unit.y + Math.sin(unit.turretAngle) * reach,
+            unit.turretAngle,
+            { flash: { length: 34, width: 22, color: 0xffe9a8 } },
+            Math.min(1, unit.muzzleFlash / 140),
+        );
+    }
+}
+
+// Burnt out: the same silhouette, blackened, with the crossed-out mark the game
+// uses everywhere else for something that is finished.
+function drawHulk(g, unit) {
+    const len = unit.radius * 2.1;
+    const wide = unit.radius * 1.5;
+    g.fillStyle(0x14171a, 1);
+    fillRotatedRect(g, unit.x, unit.y, len * 1.04, wide + 14, unit.facing);
+    g.fillStyle(0x3a332c, 1);
+    fillRotatedRect(g, unit.x, unit.y, len, wide, unit.facing);
+    g.fillStyle(0x22201d, 1);
+    g.fillCircle(unit.x, unit.y, unit.radius * 0.66);
+    g.lineStyle(7, 0x0d0f11, 1);
+    const r = unit.radius * 0.9;
+    g.lineBetween(unit.x - r, unit.y - r, unit.x + r, unit.y + r);
+    g.lineBetween(unit.x + r, unit.y - r, unit.x - r, unit.y + r);
 }
 
 function drawUnit(g, flashLayer, unit) {

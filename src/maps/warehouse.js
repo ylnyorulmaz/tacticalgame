@@ -102,6 +102,9 @@ export function build() {
             { cls: 'hostileShotgun', x: 1650, y: 820, facing: Math.PI, route: null },
             // Outside, behind the wrecked truck in the east yard.
             { cls: 'hostileHeavy', x: 2020, y: 700, facing: Math.PI, route: null },
+            // Dug in on the yard road, gun laid west across the loading door.
+            // Harmless while you are inside; squarely on the way out.
+            { cls: 'hostileTank', x: 2140, y: 900, facing: Math.PI, route: null },
         ],
         // The alarm brings a team in off the yard: the north gate and the
         // east loading road.

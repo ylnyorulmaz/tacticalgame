@@ -5,10 +5,14 @@
 import { WORLD } from '../config.js';
 import { buildMap, DEFAULT_MAP } from '../maps/index.js';
 import { NavGrid, CELL } from '../systems/nav.js';
+
+// Wide enough that no doorway on any map will take one.
+const VEHICLE_RADIUS = 34;
 import { VisionSystem, FogRenderer } from '../systems/vision.js';
 import { CombatSystem } from '../systems/combat.js';
 import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
+import { isVehicle, updateVehicle } from '../systems/vehicles.js';
 import { updateSupport } from '../systems/support.js';
 import { updateCover } from '../systems/cover.js';
 import * as orders from '../systems/orders.js';
@@ -49,6 +53,10 @@ export class GameScene extends Phaser.Scene {
         this.props = new PropLayer(this, level, 5);
         this.vision = new VisionSystem(level);
         this.nav = new NavGrid(level);
+        // A second grid for anything too wide to fit through a door. Cheap to
+        // keep — one byte array — and it is what stops a tank pathing into a
+        // building it could never physically enter.
+        this.vehicleNav = new NavGrid(level, { radius: VEHICLE_RADIUS, doorsPassable: false });
         this.combat = new CombatSystem(level, this.vision);
         this.fog = new FogRenderer(this, 20);
         this.entities = new EntityRenderer(this);
@@ -91,7 +99,11 @@ export class GameScene extends Phaser.Scene {
             spawnHostile: (cls, x, y) => this.spawnHostile(cls, x, y),
             // A shut door is pathable (you can plan through it) but not walkable
             // until it is actually breached open.
-            blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2),
+            navFor: (unit) => (unit && isVehicle(unit) ? this.vehicleNav : this.nav),
+            blocked: (x, y, unit) => {
+                const grid = unit && isVehicle(unit) ? this.vehicleNav : this.nav;
+                return grid.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2);
+            },
             closedDoorAt: (x, y) => doorAtPoint(this.level.doors, x, y, 10),
             openDoor: (door, chargedBy) => this.openDoor(door, chargedBy),
             onBreachStart: (unit, door, charge) => {
@@ -99,8 +111,8 @@ export class GameScene extends Phaser.Scene {
                 if (charge) this.pushFeed(`Charge set on ${door.id}`, '#ff8a3a');
             },
             repath: (unit, point) => {
-                const path = this.nav.findPath(unit.x, unit.y, point.x, point.y);
-                unit.setPath(path);
+                const grid = isVehicle(unit) ? this.vehicleNav : this.nav;
+                unit.setPath(grid.findPath(unit.x, unit.y, point.x, point.y));
             },
         };
 
@@ -134,10 +146,40 @@ export class GameScene extends Phaser.Scene {
     coverDestroyed(event) {
         this.decals.debris(event.rect);
         this.props.rebuild(this.level);
+        this.rebuildWorld();
+        this.pushFeed('Cover destroyed', '#b0a99c');
+    }
+
+    // Everything that caches a view of the world, refreshed together. Both nav
+    // grids, because infantry and armour see different maps.
+    rebuildWorld() {
         this.nav.rebuild();
+        this.vehicleNav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
-        this.pushFeed('Cover destroyed', '#b0a99c');
+    }
+
+    // A knocked-out tank does not vanish: it becomes terrain, blocking movement,
+    // sight and bullets for the rest of the mission. The footprint goes in as a
+    // hidden prop — the burnt-out hull is drawn from the unit itself, which
+    // keeps it pointing the way it died.
+    wreckVehicle(unit) {
+        const size = unit.radius * 2.1;
+        this.level.props.push({
+            type: 'wreck',
+            hidden: true,
+            x: unit.x,
+            y: unit.y,
+            w: size,
+            h: size,
+            blocksSight: true,
+            blocksMove: true,
+            hp: Infinity,
+        });
+        this.rebuildWorld();
+        this.decals.scorch(unit.x, unit.y, unit.radius * 2);
+        this.audio.play('shellImpact', unit.x, unit.y);
+        this.pushFeed(`${unit.stats.name} knocked out`, '#ffd24a');
     }
 
     openDoor(door, chargedBy = null) {
@@ -151,9 +193,7 @@ export class GameScene extends Phaser.Scene {
             this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
             this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
         }
-        this.nav.rebuild();
-        this.vision.refreshSegments();
-        this.combat.refreshBlockers();
+        this.rebuildWorld();
         this.entities.drawDoors(this.level);
     }
 
@@ -314,7 +354,10 @@ export class GameScene extends Phaser.Scene {
         this.ctx.now = time;
 
         if (!this.paused && !this.outcome) {
-            for (const hostile of this.hostiles) updateHostile(hostile, dt, this.ctx);
+            for (const hostile of this.hostiles) {
+                if (isVehicle(hostile)) updateVehicle(hostile, dt, this.ctx);
+                else updateHostile(hostile, dt, this.ctx);
+            }
             for (const unit of this.units) unit.update(dt, this.ctx);
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             updateCover(this.units, this.level);
@@ -331,6 +374,12 @@ export class GameScene extends Phaser.Scene {
             this.vision.setClouds(this.combat.clouds);
             updateSupport(this.units, dt, this.combat.events);
             this.effects.update(dt, this.combat.projectiles);
+            for (const unit of this.units) {
+                if (isVehicle(unit) && !unit.alive && !unit.hulked) {
+                    unit.hulked = true;
+                    this.wreckVehicle(unit);
+                }
+            }
             this.alarm.update(dt, this.ctx);
             this.announceAlarm();
             this.objectives.update(dt, this.ctx);

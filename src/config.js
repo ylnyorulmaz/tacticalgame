@@ -123,6 +123,7 @@ export const UNIT_CLASSES = {
             radius: 96,
             damage: 70,
             speed: 470,
+            penetration: 20,    // enough for a tank's back plate, nothing more
         },
         kit: { frag: 4, smoke: 2 },
         bars: { Speed: 5, Firepower: 9, Survivability: 6, Range: 6 },
@@ -273,6 +274,55 @@ export const UNIT_CLASSES = {
         bars: { Speed: 4, Firepower: 5, Survivability: 4, Range: 6 },
         ability: 'Holds its assigned arc',
     },
+    // Armour. Cannot fit through a doorway, which is what makes every building
+    // on a tank map worth running to, and cannot be suppressed or blinded.
+    hostileTank: {
+        id: 'hostileTank',
+        name: 'Tank',
+        team: 'hostile',
+        hp: 240,
+        speed: 64,
+        sight: 520,
+        turnSpeed: 1.1,
+        breachTime: 99999,
+        radius: 34,
+        vehicle: {
+            armour: { front: 60, side: 34, rear: 14 },
+            turretSpeed: 1.7,       // rad/s, independent of the hull
+            engineNoise: 520,       // tracks are audible a long way off
+        },
+        // Coaxial machine gun: what it uses on infantry it can see.
+        weapon: {
+            name: 'Coaxial MG',
+            sound: 'mg',
+            damage: 6,
+            cooldown: 110,
+            spread: 0.14,
+            range: 430,
+            bulletSpeed: 1500,
+            burst: 12,
+            burstGap: 1500,
+            magazine: 250,
+            spare: 4,
+            reloadTime: 5000,
+            penetration: 0,
+        },
+        // And the gun it uses on everything else, on its own slow timer.
+        mainGun: {
+            name: '90 mm',
+            sound: 'mainGun',
+            damage: 95,
+            radius: 115,
+            penetration: 70,
+            cooldown: 4600,
+            speed: 900,
+            minRange: 150,
+            spread: 0.025,
+        },
+        suppressionPerHit: 22,
+        bars: { Speed: 2, Firepower: 10, Survivability: 10, Range: 9 },
+        ability: 'Armoured — flank it or bring the launcher',
+    },
     hostileShotgun: {
         id: 'hostileShotgun',
         name: 'Shotgunner',
@@ -359,11 +409,26 @@ export const FOOTSTEPS = {
     paceScale: { normal: 1, sprint: 1.45, careful: 0 },
 };
 
+// Armour is about angles, not hit points. Front plate shrugs off nearly
+// everything, the sides are weaker and the back is soft, so the answer to a tank
+// is to get round it — or to bring the launcher that does not care.
+//
+//                     penetration   vs front 60   vs side 34   vs rear 14
+//   rifles, MG, buck        0            –             –            –
+//   frag grenade           20            –             –            ✔
+//   breaching charge       45            –             ✔            ✔
+//   tank main gun          70            ✔             ✔            ✔
+//   AT rocket              80            ✔             ✔            ✔
+export const ARMOUR = {
+    frontArc: 1.15,     // rad either side of the nose that counts as front
+    rearArc: 1.15,      // and either side of the tail
+};
+
 // Throwables and door charges. Smoke is the odd one out: it stops sight without
 // stopping a bullet, which is exactly what makes it worth carrying — you can
 // cross open ground behind it, and so can they.
 export const TOOLS = {
-    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200 },
+    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200, penetration: 20 },
     smoke: {
         radius: 104,
         speed: 430,
@@ -381,6 +446,7 @@ export const TOOLS = {
     charge: {
         radius: 120,
         damage: 55,
+        penetration: 45,
         placeTime: 700,     // ms to set it on the door
         fuse: 1400,         // ms from set to bang
     },
@@ -443,7 +509,7 @@ export const RATING = {
 // decision with a cost: a second team walks in.
 export const ALARM = {
     reinforceDelay: 9000,       // ms from the alarm going up to the wave arriving
-    wave: ['hostile', 'hostileShotgun', 'hostile'],
+    wave: ['hostile', 'hostileShotgun', 'hostileTank'],
     suppressedHearingScale: 0.35,   // how far a suppressed shot carries
 };
 

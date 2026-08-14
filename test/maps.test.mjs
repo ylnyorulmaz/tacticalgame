@@ -7,7 +7,10 @@
 import { MAPS, buildMap } from '../src/maps/index.js';
 import { NavGrid } from '../src/systems/nav.js';
 import { staticSolidRects, rectContains } from '../src/level.js';
-import { WORLD, SURFACES } from '../src/config.js';
+import { WORLD, SURFACES, UNIT_CLASSES, ALARM } from '../src/config.js';
+
+// Matches GameScene's vehicle grid.
+const VEHICLE_RADIUS = 34;
 
 export const name = 'maps';
 
@@ -100,6 +103,33 @@ export function run(t) {
             }
         }
         t.empty(badRoads, `${label}: roads stay on the map`);
+
+        // Armour routes on its own, wider grid. A tank parked somewhere it
+        // cannot move, or cut off from the ground it is meant to threaten, is a
+        // tank that never does anything.
+        const vehicleNav = new NavGrid(level, { radius: VEHICLE_RADIUS, doorsPassable: false });
+        const armour = level.hostiles.filter((h) => UNIT_CLASSES[h.cls] && UNIT_CLASSES[h.cls].vehicle);
+        const waveHasArmour = ALARM.wave.some((cls) => UNIT_CLASSES[cls] && UNIT_CLASSES[cls].vehicle);
+        const badArmour = [];
+        for (const spec of armour) {
+            const where = `${spec.cls} at ${spec.x},${spec.y}`;
+            if (vehicleNav.isBlockedWorld(spec.x, spec.y)) badArmour.push(`${where} is wedged`);
+            else if (!vehicleNav.findPath(spec.x, spec.y, level.cameraStart.x, level.cameraStart.y)) {
+                badArmour.push(`${where} cannot reach the approach`);
+            }
+        }
+        t.empty(badArmour, `${label}: armour can move and reach the fight`);
+
+        // The wave brings a tank, so the entries have to admit one.
+        if (waveHasArmour) {
+            const badArmourEntries = (level.reinforce || []).filter(
+                (entry) => vehicleNav.isBlockedWorld(entry.x, entry.y),
+            );
+            t.empty(
+                badArmourEntries.map((e) => `entry at ${e.x},${e.y} is too tight for armour`),
+                `${label}: reinforcement entries admit a tank`,
+            );
+        }
 
         const badRoutes = [];
         for (const hostile of level.hostiles) {

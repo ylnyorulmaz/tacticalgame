@@ -150,7 +150,7 @@ export class VisionSystem {
     //
     //  - concealment only hides at range, so a short line ignores grass entirely;
     //  - either end being on raised ground looks over everything chest-high.
-    canObserve(ax, ay, bx, by) {
+    canObserve(ax, ay, bx, by, opts) {
         if (!this.clear(this.walls, ax, ay, bx, by)) return false;
 
         const overLow = this.high.length > 0
@@ -161,8 +161,18 @@ export class VisionSystem {
         // Ground cover at the far end: close up you can pick somebody out of it,
         // at range you cannot. Looking down from a berm beats it.
         if (overLow || this.concealing.length === 0) return true;
+        if (opts && opts.ignoreConcealment) return true;
         if (Math.hypot(bx - ax, by - ay) <= CONCEAL.seeInto) return true;
         return !this.concealedAt(bx, by);
+    }
+
+    // Seeing a *unit*, which is not quite the same question as seeing a point:
+    // long grass hides a man lying in it and does nothing whatever to hide a
+    // tank parked in it.
+    canSeeUnit(ax, ay, target) {
+        return this.canObserve(ax, ay, target.x, target.y, {
+            ignoreConcealment: !!target.stats.vehicle,
+        });
     }
 
     clear(segments, ax, ay, bx, by) {
@@ -182,6 +192,16 @@ export class VisionSystem {
         const dist = Math.hypot(x - observer.x, y - observer.y);
         if (dist > this.sightRadius(observer)) return false;
         return this.canObserve(observer.x, observer.y, x, y);
+    }
+
+    // The same, for a unit rather than a patch of ground.
+    canAnySeeUnit(observers, target) {
+        for (const observer of observers) {
+            if (!observer.alive) continue;
+            if (Math.hypot(target.x - observer.x, target.y - observer.y) > this.sightRadius(observer)) continue;
+            if (this.canSeeUnit(observer.x, observer.y, target)) return true;
+        }
+        return false;
     }
 
     canAnySee(observers, x, y) {

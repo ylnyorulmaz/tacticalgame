@@ -4,6 +4,7 @@
 import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS, SURFACES, FOOTSTEPS } from '../config.js';
 import { rectContains } from '../level.js';
 import { makeOrder, paceScale, staysSet } from './orders.js';
+import { isVehicle, armourAt } from './vehicles.js';
 import { settings } from './settings.js';
 
 let nextId = 1;
@@ -17,9 +18,12 @@ export class Unit {
         this.x = x;
         this.y = y;
         this.spawn = { x, y };
-        this.radius = UNIT_RADIUS;
+        this.radius = this.stats.radius ?? UNIT_RADIUS;
         this.facing = facing;
         this.aimAngle = facing;
+        // Vehicles aim with the turret and drive with the hull; for everyone
+        // else the two are the same thing.
+        this.turretAngle = facing;
         this.maxHp = this.stats.hp;
         this.hp = this.maxHp;
         this.alive = true;
@@ -112,10 +116,20 @@ export class Unit {
         return !!this.path && this.pathIndex < this.path.length && !this.breaching;
     }
 
-    takeDamage(amount) {
-        if (!this.alive) return;
+    // `opts.penetration` and `opts.angle` describe what hit it and from where.
+    // Armour only exists for vehicles, and damage with no penetration stated at
+    // all is treated as going straight through — that is scripted damage, not a
+    // weapon, and it should do what it says.
+    //
+    // Returns whether the hit actually did anything, so the caller can report a
+    // ricochet instead of a hit.
+    takeDamage(amount, opts = {}) {
+        if (!this.alive) return false;
+        if (isVehicle(this) && opts.penetration !== undefined) {
+            if (opts.penetration < armourAt(this, opts.angle ?? this.facing)) return false;
+        }
         this.hp -= amount;
-        if (this.hp > 0) return;
+        if (this.hp > 0) return true;
 
         this.hp = 0;
         this.alive = false;
@@ -125,12 +139,14 @@ export class Unit {
         this.dropAngle = this.facing + (Math.random() - 0.5) * 1.4;
         this.dropOffset = { x: Math.cos(this.dropAngle) * 22, y: Math.sin(this.dropAngle) * 22 };
 
-        // Squadmates go down rather than out, giving the medic a window.
-        if (this.isFriendly) {
+        // Squadmates go down rather than out, giving the medic a window. A
+        // knocked-out vehicle is simply knocked out.
+        if (this.isFriendly && !isVehicle(this)) {
             this.downed = true;
             this.bleedOut = DOWNED.bleedOut;
             this.reviveProgress = 0;
         }
+        return true;
     }
 
     heal(amount) {
@@ -167,13 +183,14 @@ export class Unit {
         this.reloadTimer = 0;
     }
 
+    // Neither of these reaches a crew buttoned up inside armour.
     addSuppression(amount) {
-        if (!this.alive) return;
+        if (!this.alive || isVehicle(this)) return;
         this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
     }
 
     blind(ms) {
-        if (!this.alive) return;
+        if (!this.alive || isVehicle(this)) return;
         this.blinded = Math.max(this.blinded, ms);
     }
 
@@ -192,6 +209,7 @@ export class Unit {
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
+        this.mainGunTimer = Math.max(0, (this.mainGunTimer ?? 0) - dt);
         this.blinded = Math.max(0, this.blinded - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
         if (this.reloadTimer > 0) {
@@ -231,6 +249,7 @@ export class Unit {
 
         this.moveAlongPath(dt, ctx);
         this.facing = turnToward(this.facing, this.desiredFacing(), (this.stats.turnSpeed * dt) / 1000);
+        if (!isVehicle(this)) this.turretAngle = this.facing;
     }
 
     // What this unit wants to be looking at, in priority order: its target, the
@@ -295,9 +314,10 @@ export class Unit {
         const nx = this.x + (dx / dist) * step;
         const ny = this.y + (dy / dist) * step;
 
-        // Move each axis on its own so units slide along walls instead of sticking.
-        if (!ctx.blocked(nx, this.y)) this.x = nx;
-        if (!ctx.blocked(this.x, ny)) this.y = ny;
+        // Move each axis on its own so units slide along walls instead of
+        // sticking. A vehicle asks about its own, wider footprint.
+        if (!ctx.blocked(nx, this.y, this)) this.x = nx;
+        if (!ctx.blocked(this.x, ny, this)) this.y = ny;
     }
 
     // Loud ground gives you away. Footfalls go into the same noise list gunfire
@@ -342,8 +362,8 @@ export class Unit {
             pushY += (dy / dist) * (min - dist) * 0.5;
         }
         if (pushX === 0 && pushY === 0) return;
-        if (!ctx.blocked(this.x + pushX, this.y)) this.x += pushX;
-        if (!ctx.blocked(this.x, this.y + pushY)) this.y += pushY;
+        if (!ctx.blocked(this.x + pushX, this.y, this)) this.x += pushX;
+        if (!ctx.blocked(this.x, this.y + pushY, this)) this.y += pushY;
     }
 }
 

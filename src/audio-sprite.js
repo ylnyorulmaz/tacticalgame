@@ -202,9 +202,49 @@ export const SPRITE = {
         16336,
         306
     ],
-    lose: [
+    mainGun_1: [
         16672,
-        923
+        686
+    ],
+    mainGun_2: [
+        17388,
+        679
+    ],
+    shellImpact_1: [
+        18097,
+        465
+    ],
+    shellImpact_2: [
+        18593,
+        455
+    ],
+    ricochet_1: [
+        19078,
+        307
+    ],
+    ricochet_2: [
+        19415,
+        314
+    ],
+    ricochet_3: [
+        19759,
+        311
+    ],
+    atLaunch_1: [
+        20100,
+        465
+    ],
+    atLaunch_2: [
+        20596,
+        446
+    ],
+    engine: [
+        21072,
+        788
+    ],
+    lose: [
+        21889,
+        910
     ]
 };
 
@@ -308,6 +348,26 @@ export const VARIANTS = {
     ],
     objective: [
         "objective"
+    ],
+    mainGun: [
+        "mainGun_1",
+        "mainGun_2"
+    ],
+    shellImpact: [
+        "shellImpact_1",
+        "shellImpact_2"
+    ],
+    ricochet: [
+        "ricochet_1",
+        "ricochet_2",
+        "ricochet_3"
+    ],
+    atLaunch: [
+        "atLaunch_1",
+        "atLaunch_2"
+    ],
+    engine: [
+        "engine"
     ],
     lose: [
         "lose"

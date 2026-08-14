@@ -433,6 +433,64 @@ const BANK = {
             { kind: 'osc', type: 'triangle', freq: [1318, 1318], duration: 0.26, attack: 0.005, decay: 3.4, gain: 0.4, delay: 0.11 },
         ],
     },
+    // A tank's main gun: a flat, enormous crack with a long tail. Louder and
+    // lower than anything infantry carries, so it is unmistakable.
+    mainGun: {
+        takes: 2,
+        drive: 3.4,
+        reverb: { decay: 0.75, wet: 0.42, tailSeconds: 1 },
+        layers: [
+            { kind: 'noise', filter: 'lowpass', freq: [2200, 110], q: 0.7, duration: 0.5, attack: 0.001, decay: 5, gain: 1 },
+            { kind: 'osc', type: 'square', freq: [160, 32], duration: 0.45, decay: 5, gain: 0.8 },
+            { kind: 'osc', type: 'sine', freq: [70, 26], duration: 0.6, decay: 3.5, gain: 0.7 },
+            { kind: 'noise', filter: 'highpass', freq: [3600, 900], duration: 0.3, decay: 7, gain: 0.45, delay: 0.02 },
+        ],
+    },
+    // Where the shell lands: earth and metal rather than the sharper grenade.
+    shellImpact: {
+        takes: 2,
+        drive: 2.8,
+        reverb: { decay: 0.6, wet: 0.4, tailSeconds: 0.8 },
+        layers: [
+            { kind: 'noise', filter: 'lowpass', freq: [1300, 90], q: 0.8, duration: 0.55, attack: 0.001, decay: 4.5, gain: 1 },
+            { kind: 'osc', type: 'sawtooth', freq: [120, 30], duration: 0.5, decay: 4, gain: 0.65 },
+            { kind: 'noise', filter: 'bandpass', freq: [2400, 800], q: 0.9, duration: 0.4, decay: 6, gain: 0.4, delay: 0.05 },
+        ],
+    },
+    // A round failing to get through armour: bright, metallic, and a whine off
+    // into the distance. This is the sound of shooting the wrong side of a tank.
+    ricochet: {
+        takes: 3,
+        drive: 1.8,
+        reverb: { decay: 0.4, wet: 0.3, tailSeconds: 0.5 },
+        layers: [
+            { kind: 'noise', filter: 'bandpass', freq: [3200, 2400], q: 2.6, duration: 0.07, attack: 0.001, decay: 16, gain: 0.7 },
+            { kind: 'osc', type: 'sine', freq: [2600, 900], duration: 0.36, attack: 0.004, decay: 4.5, gain: 0.4, delay: 0.02 },
+            { kind: 'osc', type: 'triangle', freq: [1800, 640], duration: 0.3, decay: 5, gain: 0.22, delay: 0.03 },
+        ],
+    },
+    // The launcher: a whoosh and a backblast rather than a bang.
+    atLaunch: {
+        takes: 2,
+        drive: 2.2,
+        reverb: { decay: 0.55, wet: 0.35, tailSeconds: 0.7 },
+        layers: [
+            { kind: 'noise', filter: 'lowpass', freq: [1800, 300], q: 0.7, duration: 0.42, attack: 0.004, decay: 4, gain: 0.9 },
+            { kind: 'noise', filter: 'highpass', freq: [1200, 2600], duration: 0.5, attack: 0.02, decay: 3, gain: 0.5, delay: 0.04 },
+            { kind: 'osc', type: 'sawtooth', freq: [220, 70], duration: 0.3, decay: 6, gain: 0.45 },
+        ],
+    },
+    // Idling armour: a low diesel rumble, looped by the audio engine while a
+    // tank is alive and near enough to hear.
+    engine: {
+        takes: 1,
+        drive: 1.6,
+        layers: [
+            { kind: 'osc', type: 'sawtooth', freq: [48, 44], duration: 0.9, attack: 0.05, decay: 0.4, gain: 0.55 },
+            { kind: 'osc', type: 'square', freq: [24, 23], duration: 0.9, attack: 0.05, decay: 0.4, gain: 0.35 },
+            { kind: 'noise', filter: 'lowpass', freq: [260, 180], q: 0.8, duration: 0.9, attack: 0.06, decay: 0.5, gain: 0.3 },
+        ],
+    },
     lose: {
         takes: 1,
         drive: 1.4,

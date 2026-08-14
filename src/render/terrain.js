@@ -301,6 +301,9 @@ function drawBuilding(g, level) {
 }
 
 function drawProp(g, prop) {
+    // Hidden props are pure collision — a knocked-out tank's footprint, drawn
+    // from the unit itself so the hull keeps the angle it died at.
+    if (prop.hidden) return;
     if (prop.type === 'wreck') {
         const x = prop.x - prop.w / 2;
         const y = prop.y - prop.h / 2;
