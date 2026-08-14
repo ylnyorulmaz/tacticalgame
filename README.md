@@ -1,12 +1,19 @@
 # Tactical CQB — top-down squad prototype
 
-A browser game about clearing a building with a six-man squad: pick a map, click
-to select, right-click to move, and watch line of sight peel the fog off the map
-one room at a time. Pausable real-time — hit `Space`, plan, unpause, watch it play
-out.
+A browser game about taking a squad somewhere dangerous and getting it back out:
+pick a map, click to select, right-click to move, and watch line of sight peel
+the fog off the ground a room at a time. Pausable real-time — hit `Space`, plan,
+unpause, watch it play out.
+
+Each map wants something different. One is a straight clear, one is an intel run
+you have to exfil from, one is a rescue where the person you came for can be
+killed by your own grenade. Two of them have armour on the ground.
 
 Built with Phaser 3 and Howler. No build step and no bundler — `npm install` is
 only needed to run the tests.
+
+Working on the code? [AGENTS.md](AGENTS.md) explains how it fits together and
+which mistakes this repo has already made.
 
 ![Map selection](docs/menu.png)
 
@@ -75,11 +82,11 @@ reloading is a window to move, and suppressive fire stops being free. Off,
 weapons never run dry, which is how the game played before the switch existed.
 The choice is remembered in `localStorage`.
 
-| Map | Plays like |
-| --- | --- |
-| **Compound** | Three rooms, two doors, one way in. The starter: breach and clear. |
-| **Warehouse** | Six bays, four doors, crates everywhere. Nothing is farther than a room away — Breacher and Machine Gunner territory. |
-| **Outpost** | Open ground, two huts, dug-in positions and patrols. Long sightlines; the Marksman earns its keep. |
+| Map | The job | Plays like |
+| --- | --- | --- |
+| **Compound** | Clear it | Three rooms, two doors, one way in. The starter, and the only map where killing everyone *is* the mission. |
+| **Warehouse** | Take the intel and exfil | Six bays, four doors, crates everywhere — Breacher and Machine Gunner territory. A tank is dug in across the way out. |
+| **Outpost** | Walk a hostage out | Open ground, two huts, dug-in positions and patrols. Long sightlines, armour on both sides, and a frag through the wrong door loses the mission. |
 
 `R` restarts the current map, `Esc` on the end-of-mission overlay goes back to the
 map select. Maps live in `src/maps/`; adding one means adding a data module and a
@@ -87,8 +94,9 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
 
 ## What is in the mission
 
-- **Six unit types, one of each deployed.** Every class carries a mechanic of its
-  own, not just a different rifle:
+- **Eight unit types, one of each deployed.** Six operators everywhere, plus the
+  AT gunner wherever there is armour to deal with, plus a tank of your own on
+  Outpost. Every class carries a mechanic of its own, not just a different rifle:
 
   | Class | Plays like |
   | --- | --- |
@@ -104,8 +112,8 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   The bottom-right card shows the selected unit's Speed / Firepower /
   Survivability / Range, read straight off the same stat table the simulation
   uses, plus its ability line and a pip per item of kit still in the pouch.
-- **You can read your whole squad at once.** The bar along the bottom shows all
-  six — health, rounds in the magazine and spares left, hotkey, and what each one
+- **You can read your whole squad at once.** The bar along the bottom shows
+  everyone — health, rounds in the magazine and spares left, hotkey, and what each one
   is doing (HOLDING, ENGAGING, IN COVER, PINNED, RELOADING, BLINDED, SUPPRESSING,
   STACKED, WEAPONS TIGHT, DRY, DOWN with its bleed-out clock, KIA). Click a slot to select
   that operator. Top right is a minimap with the camera's viewport, your squad,
@@ -274,8 +282,12 @@ npm test
   in, an aimed throw spends exactly one grenade, smoke blocks the view but not
   the bullet, a flashbang blinds only what could see it, a magazine runs out and
   costs real time to change, an unsuppressed shot raises the alarm and a
-  suppressed one does not, exactly one reinforcement wave arrives, and a mission
-  ends on its objectives rather than on a body count.
+  suppressed one does not, exactly one reinforcement wave arrives, a mission ends
+  on its objectives rather than on a body count, mud is slower than grass and A*
+  routes around it, gravel gives your footsteps away and creeping does not, tall
+  grass hides a man at range but not up close, a berm sees over a crate, a blown
+  crate opens both the sight line and the nav cell, and armour is only hurt from
+  the sides it should be.
 - `test/smoke.test.mjs` drives the real game in Chromium via Playwright: menu →
   mission → win → back to the menu, with a clean console. It is skipped with a
   notice if Playwright is not installed. On a machine with a global install,
@@ -285,6 +297,8 @@ npm test
 ## Layout
 
 ```
+AGENTS.md               how the code fits together, for anyone editing it
+CLAUDE.md               the short version, for Claude Code
 index.html              page shell, CDN tags + offline fallbacks
 vendor/                 vendored Phaser and Howler for offline play
 assets/audio/sfx.wav    generated sound bank (see tools/build-audio.mjs)
