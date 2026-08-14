@@ -162,6 +162,8 @@ function stateLabel(unit) {
     if (unit.order.suppressAt) return 'SUPPRESSING';
     if (unit.order.stance === 'hold') return 'WEAPONS TIGHT';
     if (unit.inCover > 0.35) return 'IN COVER';
+    if (unit.concealed) return 'CONCEALED';
+    if (unit.elevated) return 'HIGH GROUND';
     if (unit.target) return 'ENGAGING';
     if (unit.path) return unit.order.pace === 'sprint' ? 'SPRINTING' : 'MOVING';
     return 'HOLDING';
@@ -174,7 +176,8 @@ function stateColor(unit) {
     if (unit.reloadTimer > 0) return '#ffd24a';
     if (unit.order.stackAt) return '#7fd8ff';
     if (unit.order.suppressAt || unit.order.stance === 'hold') return '#ffd24a';
-    if (unit.inCover > 0.35) return '#7df07d';
+    if (unit.inCover > 0.35 || unit.concealed) return '#7df07d';
+    if (unit.elevated) return '#7fd8ff';
     if (unit.target || unit.breaching) return '#ffd24a';
     return '#cfe9ff';
 }

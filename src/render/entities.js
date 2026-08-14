@@ -95,6 +95,8 @@ export class EntityRenderer {
             if (unit.inCover > 0.35) drawCoverMark(overlay, unit);
             if (unit.isFriendly && unit.order.stance === 'hold') drawHoldMark(overlay, unit);
             if (unit.blinded > 0) drawBlinded(overlay, unit, state.time);
+            if (unit.isFriendly && unit.concealed) drawConcealed(overlay, unit);
+            if (unit.isFriendly && unit.elevated) drawElevated(overlay, unit);
             if (unit.lastHitAt && state.time - unit.lastHitAt < 700) {
                 drawHitDirection(overlay, unit, (state.time - unit.lastHitAt) / 700);
             }
@@ -184,6 +186,28 @@ function drawHostage(g, unit, time) {
             unit.x + Math.cos(unit.facing + side) * 15,
             unit.y + Math.sin(unit.facing + side) * 15,
         );
+    }
+}
+
+// Standing in cover you cannot be picked out of at range: a few grass strokes
+// round the boots, matching the ground they are standing in.
+function drawConcealed(g, unit) {
+    g.lineStyle(2, 0x8ff06a, 0.75);
+    for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2 + 0.4;
+        const x = unit.x + Math.cos(angle) * (unit.radius + 3);
+        const y = unit.y + Math.sin(angle) * (unit.radius + 3);
+        g.lineBetween(x, y, x + (i % 2 ? 3 : -3), y - 9);
+    }
+}
+
+// On raised ground: a pair of contour ticks, the same idea as the berm itself.
+function drawElevated(g, unit) {
+    g.lineStyle(2, 0x7fd8ff, 0.8);
+    for (const r of [unit.radius + 6, unit.radius + 11]) {
+        g.beginPath();
+        g.arc(unit.x, unit.y, r, -2.5, -0.65);
+        g.strokePath();
     }
 }
 

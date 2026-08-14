@@ -39,17 +39,33 @@ export function solidRects(level) {
     return rects;
 }
 
-// Rectangles that block line of sight. Sandbags are low cover: you can see over
-// them, you just cannot walk or shoot through them.
-export function sightBlockingRects(level) {
+// Sight blockers come in two heights, and the difference is what makes standing
+// on raised ground worth anything.
+//
+// Wall height: walls and shut doors. Nobody sees past these.
+export function wallRects(level) {
     const rects = level.walls.slice();
     for (const door of level.doors) {
         if (!door.open) rects.push(door);
     }
+    return rects;
+}
+
+// Chest height: crates, wrecks, hedges. They stop a bullet and they stop sight
+// from ground level, but somebody up on a berm looks straight over them.
+export function lowRects(level) {
+    const rects = [];
     for (const prop of level.props) {
         if (prop.blocksSight && isBox(prop)) rects.push(boxRect(prop));
     }
     return rects;
+}
+
+// Everything that blocks sight from the ground, which is both of the above.
+// Sandbags are not here: they are low enough to see over from anywhere, you
+// just cannot walk or shoot through them.
+export function sightBlockingRects(level) {
+    return [...wallRects(level), ...lowRects(level)];
 }
 
 // Sandbags are an arc of low cover: bullets and bodies stop, sight does not.

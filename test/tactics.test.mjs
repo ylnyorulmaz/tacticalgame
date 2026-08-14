@@ -116,8 +116,10 @@ function world(mapId = 'compound') {
     return w;
 }
 
-// Somewhere in the open on the compound map, well clear of the building.
-const OPEN = { x: 300, y: 1200 };
+// Somewhere in the open on the compound map: clear of the building, and clear
+// of the terrain patches too — a case about weapons should not accidentally
+// become a case about tall grass.
+const OPEN = { x: 320, y: 1420 };
 
 export function run(t) {
     holdFire(t);
@@ -134,6 +136,92 @@ export function run(t) {
     objectives(t);
     rating(t);
     surfaces(t);
+    concealment(t);
+    elevation(t);
+}
+
+// Tall grass hides you without stopping anything. The rule that keeps it from
+// being a wall is the range one, so that is what gets pinned down.
+function concealment(t) {
+    const w = world('outpost');
+    const grass = w.level.terrain.find((p) => p.kind === 'grass');
+    t.ok(!!grass, 'the outpost has tall grass on it');
+
+    // A target just inside the near edge, seen from far off and from arm's
+    // length. The distance between the two observers is the whole rule.
+    const cy = grass.y + grass.h / 2;
+    const inside = { x: grass.x + 40, y: cy };
+    const far = { x: grass.x - 340, y: cy };
+    const close = { x: grass.x - 60, y: cy };
+
+    t.ok(!w.vision.canObserve(far.x, far.y, inside.x, inside.y),
+        'somebody standing off in the field cannot be picked out from across the grass');
+    t.ok(w.vision.canObserve(close.x, close.y, inside.x, inside.y),
+        'but from the edge of it they can');
+    t.ok(w.vision.hasLineOfSight(far.x, far.y, inside.x, inside.y),
+        'and a bullet crosses the grass either way');
+
+    // The same in the simulation: a hostile in the grass cannot be acquired
+    // from range, and can be from close up.
+    const shooter = w.add('operator', far.x, far.y);
+    const hidden = w.add('hostile', inside.x, inside.y, 0, { inert: true });
+    hidden.maxHp = 1e6;
+    hidden.hp = 1e6;
+    w.combat.acquire(shooter, [hidden]);
+    t.equal(shooter.target, null, 'nothing to acquire through a field of grass');
+    shooter.x = close.x;
+    w.combat.acquire(shooter, [hidden]);
+    t.equal(shooter.target, hidden, 'and a contact once you are on top of it');
+}
+
+// Raised ground looks over chest-high cover. It cuts both ways, which is the
+// half that makes a berm a decision rather than a free win.
+function elevation(t) {
+    const w = world('warehouse');
+    const berm = w.level.terrain.find((p) => p.kind === 'high');
+    t.ok(!!berm, 'the warehouse has raised ground on it');
+    t.ok(w.vision.elevatedAt(berm.x + berm.w / 2, berm.y + berm.h / 2), 'the vision system knows it is raised');
+
+    // Build the geometry rather than hunting for it on the map: a crate east of
+    // the berm and a target just behind it. Then ask the same question twice,
+    // once with the berm and once without, so the only thing that differs is
+    // the height of the observer.
+    // North of the berm is open ground — the warehouse itself is away to the
+    // east, and a wall would block the view from any height.
+    const high = { x: berm.x + berm.w / 2, y: berm.y + berm.h / 2 };
+    w.level.props.push({
+        type: 'crate', x: high.x, y: high.y - 150, w: 62, h: 62,
+        blocksSight: true, blocksMove: true,
+    });
+    w.vision.refreshSegments();
+    const behind = { x: high.x, y: high.y - 240 };
+
+    t.ok(w.vision.canObserve(high.x, high.y, behind.x, behind.y),
+        'from the berm you see over the crate');
+    const raised = w.vision.high;
+    w.vision.high = [];
+    t.ok(!w.vision.canObserve(high.x, high.y, behind.x, behind.y),
+        'from ground level the same crate blocks you');
+    t.ok(!w.vision.hasLineOfSight(high.x, high.y, behind.x, behind.y),
+        'and a bullet is stopped by it from either height');
+    w.vision.high = raised;
+
+    // Walls are walls from any height.
+    const wall = w.level.walls[0];
+    const insideBuilding = { x: wall.x + 200, y: wall.y + 120 };
+    t.ok(!w.vision.canObserve(high.x, high.y, insideBuilding.x, insideBuilding.y),
+        'a wall still blocks somebody standing on a berm');
+
+    // And the extra reach that comes with the height.
+    const spotter = w.add('marksman', high.x, high.y);
+    t.ok(
+        w.vision.sightRadius(spotter) > spotter.stats.sight,
+        'raised ground sees further',
+    );
+    spotter.x = berm.x - 120;
+    spotter.y = berm.y + berm.h + 120;
+    t.ok(!w.vision.elevatedAt(spotter.x, spotter.y), 'the spot beside the berm is flat');
+    t.equal(w.vision.sightRadius(spotter), spotter.stats.sight, 'flat ground does not');
 }
 
 // The ground itself: slow where it should be slow, loud where it should be
@@ -508,7 +596,9 @@ function pace(t) {
     enemy.maxHp = 1e6;
     enemy.hp = 1e6;
     orders.cyclePace([sprinter]);
-    s.ctx.repath(sprinter, { x: OPEN.x, y: OPEN.y + 600 });
+    // Far enough that it is still running when the window closes: a unit that
+    // arrives stops sprinting, and then it is allowed to shoot again.
+    s.ctx.repath(sprinter, { x: OPEN.x + 600, y: OPEN.y });
     t.equal(s.countShots(1500, sprinter), 0, 'a sprinting unit does not shoot');
 
     // Creeping keeps a marksman set, which is the reason to order it.

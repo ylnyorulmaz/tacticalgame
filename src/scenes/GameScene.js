@@ -302,6 +302,12 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.update(dt, this.ctx);
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             updateCover(this.units, this.level);
+            // What the ground is doing for each unit, so the roster can say so:
+            // a rule the player cannot see is a rule they will never use.
+            for (const unit of this.units) {
+                unit.concealed = this.vision.concealedAt(unit.x, unit.y);
+                unit.elevated = this.vision.elevatedAt(unit.x, unit.y);
+            }
             this.combat.update(dt, this.units, time);
             // Smoke is an occluder like any other, it just moves: hand the
             // current clouds to the vision system before anything asks what it
@@ -337,7 +343,7 @@ export class GameScene extends Phaser.Scene {
 
         const polygons = this.squad
             .filter((u) => u.alive)
-            .map((u) => this.vision.visibilityPolygon(u.x, u.y, u.stats.sight));
+            .map((u) => this.vision.visibilityPolygon(u.x, u.y, this.vision.sightRadius(u)));
         this.fog.update(polygons);
 
         this.entities.draw({

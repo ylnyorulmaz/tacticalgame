@@ -107,7 +107,8 @@ export class CombatSystem {
             unit.target = null;
             return;
         }
-        const reach = Math.min(unit.stats.sight, unit.stats.weapon.range);
+        // Standing on raised ground buys reach as well as a view over cover.
+        const reach = Math.min(this.vision.sightRadius(unit), unit.stats.weapon.range);
         const current = unit.target;
         if (current && current.alive && this.inReach(unit, current, reach)) return;
 

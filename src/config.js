@@ -345,6 +345,15 @@ export const SURFACES = {
 // still answer "how fast, how loud, how expensive" without a lookup by name.
 export const SURFACE_BY_ID = Object.values(SURFACES).sort((a, b) => a.id - b.id);
 
+// Concealment is not cover: tall grass hides you without stopping anything.
+// The rule that keeps it from being a wall is a range one — you can see into
+// the edge of a field, you cannot see across it.
+export const CONCEAL = { seeInto: 150 };
+
+// Raised ground: you look over chest-high cover from up here, and a little
+// further besides. It cuts both ways — everyone else can see you over it too.
+export const ELEVATION = { sightBonus: 1.15 };
+
 export const FOOTSTEPS = {
     interval: 420,          // ms between footfalls loud enough to report
     paceScale: { normal: 1, sprint: 1.45, careful: 0 },
