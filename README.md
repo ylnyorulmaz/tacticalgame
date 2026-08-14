@@ -16,6 +16,8 @@ only needed to run the tests.
 
 ![Squad in cover with the roster bar and minimap](docs/squad-ui.png)
 
+![End of a rescue mission, graded](docs/mission-complete.png)
+
 ## Running it
 
 The game is plain static files, but it uses ES modules, so it needs to be served
@@ -39,8 +41,17 @@ automatic offline fallback, so the game still boots without a network.
 | Left click | Select a unit |
 | Left drag | Box-select several units |
 | Right click | Move order (units spread into a loose formation) |
+| Right **drag** | Move, and face the way you dragged when you arrive |
 | Shift + right click | Queue another waypoint |
 | `Space` | Pause / unpause — orders can still be issued while paused |
+| `F` | Hold fire / weapons free |
+| `Q` then click | Suppress that patch of ground — no target needed |
+| `G` then click | Throw a frag exactly there |
+| `C` then click | Smoke: blocks sight, not bullets |
+| `V` then click | Flashbang: blinds everyone who can see it |
+| `E` then click a door | Stack beside it and wait |
+| `Enter` | GO — everyone stacked goes through together |
+| `Z` | Pace: normal → sprint (fast, no shooting) → careful (slow, stays set) |
 | `Tab` | Cycle through the squad |
 | `1`–`6` | Select a specific unit (hold Shift to add) |
 | `Ctrl`+`A` | Select the whole squad |
@@ -54,6 +65,13 @@ automatic offline fallback, so the game still boots without a network.
 
 The game opens on a map select. Each card's thumbnail is drawn from that map's
 own data, so it always matches what you are about to play.
+
+Under the cards is one switch: **Ammo & reloads** (`T`, or click it). On, every
+weapon has a magazine, a finite pouch of spares and real reload downtime — the
+machine gunner's hundred-round belt costs four seconds to change, a hostile
+reloading is a window to move, and suppressive fire stops being free. Off,
+weapons never run dry, which is how the game played before the switch existed.
+The choice is remembered in `localStorage`.
 
 | Map | Plays like |
 | --- | --- |
@@ -73,18 +91,19 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   | Class | Plays like |
   | --- | --- |
   | **Operator** | Carbine, long reach, balanced — the baseline |
-  | **Breacher** | Shotgun, close-range punch, tough, forces doors twice as fast |
-  | **Grenadier** | Four grenades that arc over cover and detonate for area damage; won't throw when a squadmate is in the blast |
+  | **Breacher** | Shotgun, close-range punch, tough, forces doors twice as fast — and carries the breaching charges and flashbangs |
+  | **Grenadier** | Frags that arc over cover and detonate for area damage, plus smoke; won't throw when a squadmate is in the blast |
   | **Medic** | Heals nearby squadmates, and revives downed ones before they bleed out |
-  | **Marksman** | Very long range and heavy single shots, but must be stationary to fire |
+  | **Marksman** | Very long range and heavy single shots, but must be stationary to fire — and its rifle is **suppressed**, so it is the one weapon that does not raise the alarm |
   | **Machine Gunner** | Wide, fast, sustained fire that pins hostiles so they stop shooting back |
 
   The bottom-right card shows the selected unit's Speed / Firepower /
   Survivability / Range, read straight off the same stat table the simulation
-  uses, plus its ability line and remaining grenades.
+  uses, plus its ability line and a pip per item of kit still in the pouch.
 - **You can read your whole squad at once.** The bar along the bottom shows all
-  six — health, hotkey, and what each one is doing (HOLDING, ENGAGING, IN COVER,
-  PINNED, BREACHING, DOWN with its bleed-out clock, KIA). Click a slot to select
+  six — health, rounds in the magazine and spares left, hotkey, and what each one
+  is doing (HOLDING, ENGAGING, IN COVER, PINNED, RELOADING, BLINDED, SUPPRESSING,
+  STACKED, WEAPONS TIGHT, DRY, DOWN with its bleed-out clock, KIA). Click a slot to select
   that operator. Top right is a minimap with the camera's viewport, your squad,
   and hostiles *someone can currently see*; click it to look somewhere. Under it
   runs a short event feed — kills, casualties, doors going in — and a unit that
@@ -134,8 +153,53 @@ row in `src/maps/index.js` — nothing else knows how many maps there are.
   shaped to the weapon — a wide bloom for buckshot, a long lance for the marksman
   — ejects brass, and leaves a wisp of smoke. Rounds strike walls in dust and
   sparks; grenades trail smoke and burst into a shockwave ring and debris.
+- **Orders, not just move.** Firing is still automatic, but you can override it:
+  hold fire to move without starting a fight, put suppressive fire on a doorway
+  so nobody in it dares lean out, place a frag by hand instead of waiting for the
+  grenadier to decide, drag a move order to say which way to face on arrival, and
+  stack a team beside a door so they go through together on your word. Pace is a
+  choice too — sprinting is fast with the weapon down, creeping is slow but keeps
+  the marksman set. `src/systems/orders.js` owns all of it; every unit carries one
+  order record, and an untouched record behaves exactly as the game did before.
+- **Tools that change the ground, not just the damage.** Smoke is the important
+  one: `src/systems/vision.js` keeps two occluder sets, and the game asks two
+  different questions of them. `hasLineOfSight` is the bullet's question — walls,
+  shut doors, crates — and blast and tracers use it. `canObserve` is the eye's
+  question and adds whatever smoke is hanging in between; acquisition, the
+  hostile brain and the fog all use that one. So you can cross open ground behind
+  a cloud, fire blind through it, and be fired at blind through it, and none of
+  that needed a special case. Flashbangs blind everyone with a view of the burst
+  and hurt nobody, which is what makes a room enterable without a grenade.
+  Breaching charges are the loud alternative to forcing a door by hand — a
+  stacked breacher told to GO blows it and catches whoever was behind it.
+- **An alarm worth avoiding.** The garrison has one state of mind for the whole
+  map: **undetected**, **searching**, or **alarm**. A hostile with eyes on you,
+  a body somebody has found, or an unsuppressed shot inside earshot each take it
+  straight to alarm — and then patrol routes are abandoned, everyone converges on
+  your last known position, and a single wave of reinforcements walks in from the
+  map's entry roads. One wave, once: the point is pressure on a mission that has
+  gone loud, not a faucet that makes it unwinnable. The marksman's rifle is
+  suppressed, so its shots carry a third as far and never raise the alarm by
+  themselves — though the body will, once somebody finds it. `src/systems/alarm.js`
+  reads world state rather than being told about events, so there is no
+  bookkeeping to drift out of sync.
+- **Missions, not just maps.** Each map states what it is for, and only one of
+  the three is "kill everyone". Compound is a straight clear. Warehouse is an
+  intel run: reach the office, take what you came for, and get the whole squad
+  back to the extraction zone — killing the garrison is a bonus, not the job.
+  Outpost is a rescue: somebody is being held in the east hut, they follow you
+  once you reach them, and **if they die the mission is lost** — which is what
+  makes a frag through the door the wrong answer and a flashbang the right one.
+  An exfil always waits on every other objective, so it is never a way to skip
+  the mission.
+- **A grade at the end.** Missions are standalone, so the only reason to run one
+  twice is to run it better: the outcome screen scores time, casualties, whether
+  the alarm ever went up and whether you took the bonus, and hands out S through
+  D. Winning and winning well are different things.
 - **Pausable real-time.** `Space` freezes the simulation but not the interface:
   select units, issue orders, and see them drawn as dashed plans, then unpause.
+  With orders in the game the pause is a planning phase rather than a freeze
+  frame — the whole squad can be given its part of a plan before anyone moves.
 - **Sound.** Every weapon has its own report, and there are effects for grenades
   and their detonation, rounds striking walls and bodies, a door going in, a
   squadmate going down or being revived, and the mission ending. Playback is
@@ -164,6 +228,16 @@ npm test
   valid, fresh door state per build, and every weapon sound resolving to a real
   entry in the generated bank. The map suite has already caught a hostile spawned
   inside a crate and a patrol waypoint inside a wreck.
+- `test/tactics.test.mjs` also runs in plain Node: it builds a headless world
+  with the same systems in the same update order as `GameScene` and asserts the
+  tactical rules directly — a unit on hold fires nothing, ordered suppression
+  pins whoever is standing in it, a sprinter does not shoot, a careful marksman
+  stays set while moving, a stacked unit waits for the word before the door goes
+  in, an aimed throw spends exactly one grenade, smoke blocks the view but not
+  the bullet, a flashbang blinds only what could see it, a magazine runs out and
+  costs real time to change, an unsuppressed shot raises the alarm and a
+  suppressed one does not, exactly one reinforcement wave arrives, and a mission
+  ends on its objectives rather than on a body count.
 - `test/smoke.test.mjs` drives the real game in Chromium via Playwright: menu →
   mission → win → back to the menu, with a clean console. It is skipped with a
   notice if Playwright is not installed. On a machine with a global install,
@@ -190,6 +264,10 @@ src/systems/units.js    unit state, movement, breaching, damage, downed
 src/systems/combat.js   weapons, tracers, grenades, suppression
 src/systems/support.js  medic healing and revives
 src/systems/cover.js    how well a unit is shielded from a given threat
+src/systems/orders.js   the order record and every verb that writes it
+src/systems/alarm.js    the garrison's alert level and reinforcements
+src/systems/objectives.js  what the mission is for, and the end-of-run grade
+src/systems/settings.js localStorage-backed player settings (the ammo switch)
 src/systems/audio.js    procedural sound: synth engine and the sound table
 src/systems/ai.js       hostile state machine
 src/systems/input.js    selection, orders, camera
@@ -200,10 +278,20 @@ src/render/entities.js  units, corpses, doors, tracers, order lines
 src/render/preview.js   map thumbnails drawn from map data
 src/render/roster.js    the squad bar
 src/render/minimap.js   minimap with camera rect and live markers
-src/render/hud.js       unit card, mission status, event feed, overlays
-test/                   map, audio and browser smoke suites + runner
+src/render/palette.js   the order palette along the top
+src/render/hud.js       unit card, status, objectives, event feed, overlays
+test/                   map, audio, tactics and browser smoke suites + runner
 ```
 
 Two knobs worth knowing about: `src/config.js` holds every gameplay number in one
 place, and `?renderer=canvas` forces Phaser's canvas backend (the fog has a
 separate code path there, since inverted geometry masks are WebGL-only).
+
+One performance note, measured rather than guessed: smoke is the only thing here
+that costs anything noticeable. Each cloud adds a twelve-sided occluder that
+every sight test and every fog ray has to consider, and three clouds on screen at
+once cost roughly a fifth of the frame in a software renderer (11.8 → 9.4 fps on
+Outpost under swiftshader; hardware rendering has far more headroom). Clouds last
+thirteen seconds and the squad carries five between them, so it is a bounded
+cost — but it is why the dynamic occluders are kept in their own list and only
+consulted by the tests that are about *seeing*.

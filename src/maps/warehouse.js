@@ -103,6 +103,16 @@ export function build() {
             // Outside, behind the wrecked truck in the east yard.
             { cls: 'hostileHeavy', x: 2020, y: 700, facing: Math.PI, route: null },
         ],
+        // The alarm brings a team in off the yard: the north gate and the
+        // east loading road.
+        reinforce: [{ x: 1200, y: 120 }, { x: 2280, y: 900 }],
+        // Get in, take what you came for, get out — the garrison is an
+        // obstacle rather than the objective.
+        objectives: [
+            { kind: 'intel', x: 1740, y: 380, label: 'Recover the intel' },
+            { kind: 'exfil', x: 840, y: 1200, w: 360, h: 130, label: 'Exfil with the squad' },
+            { kind: 'eliminate', optional: true, label: 'Clear the warehouse (bonus)' },
+        ],
         cameraStart: { x: 930, y: 1080 },
     };
 }

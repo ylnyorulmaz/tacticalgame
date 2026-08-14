@@ -6,8 +6,10 @@ import { COLORS } from '../config.js';
 import { MAPS, buildMap } from '../maps/index.js';
 import { getAudio } from '../systems/audio.js';
 import { drawMapPreview } from '../render/preview.js';
+import { settings, loadSettings, toggleSetting } from '../systems/settings.js';
 
 const CARD = { width: 340, height: 300, gap: 32 };
+const SWITCH = { width: 300, height: 34 };
 
 export class MenuScene extends Phaser.Scene {
     constructor() {
@@ -17,6 +19,7 @@ export class MenuScene extends Phaser.Scene {
     create() {
         this.audio = getAudio(this);
         this.selection = 0;
+        loadSettings();
         // Build every map once so the thumbnails are the real thing.
         this.levels = MAPS.map((meta) => buildMap(meta.id));
 
@@ -38,6 +41,12 @@ export class MenuScene extends Phaser.Scene {
         this.subtitle.setText('Pick a map. Six operators, one entry, no respawns.');
         this.hint = text(0, 0, 16, '#e8f0e8', 'normal');
         this.hint.setText('Click a card, or ←/→ and Enter  ·  1-3 direct  ·  M mute');
+
+        // The one rule the player gets to choose before deploying.
+        // Left-aligned so the words never run into the pill on the right.
+        this.switchLabel = text(0, 0, 16, '#ffffff').setOrigin(0, 0);
+        this.switchNote = text(0, 0, 13, '#cfe9ff', 'normal');
+        this.switchNote.setText('Magazines, reload downtime and a finite pouch. Off: weapons never run dry.');
 
         for (const meta of MAPS) {
             this.labels.push({
@@ -65,6 +74,7 @@ export class MenuScene extends Phaser.Scene {
         keys.on('keydown-ENTER', () => this.launch(this.selection));
         keys.on('keydown-SPACE', () => this.launch(this.selection));
         keys.on('keydown-M', () => this.audio.toggleMute());
+        keys.on('keydown-T', () => this.toggleAmmo());
         ['ONE', 'TWO', 'THREE'].forEach((key, i) => {
             if (i < MAPS.length) keys.on(`keydown-${key}`, () => this.launch(i));
         });
@@ -91,6 +101,15 @@ export class MenuScene extends Phaser.Scene {
         this.subtitle.setPosition(w / 2, Math.max(96, top - 60));
         this.hint.setPosition(w / 2, Math.min(h - 34, top + CARD.height + 36));
 
+        this.switchRect = {
+            x: w / 2 - SWITCH.width / 2,
+            y: Math.min(h - 92, top + CARD.height + 74),
+            width: SWITCH.width,
+            height: SWITCH.height,
+        };
+        this.switchLabel.setPosition(this.switchRect.x + 14, this.switchRect.y + 8);
+        this.switchNote.setPosition(w / 2, this.switchRect.y + SWITCH.height + 6);
+
         this.cards.forEach((card, i) => {
             const label = this.labels[i];
             label.name.setPosition(card.x + card.width / 2, card.y + 168);
@@ -101,6 +120,38 @@ export class MenuScene extends Phaser.Scene {
 
         this.drawBackdrop(w, h);
         this.drawCards();
+        this.drawSwitch();
+    }
+
+    drawSwitch() {
+        const rect = this.switchRect;
+        if (!rect) return;
+        const on = settings.ammo;
+        const g = this.switchGfx || (this.switchGfx = this.add.graphics().setDepth(1));
+        g.clear();
+        g.fillStyle(0x121a15, 1);
+        g.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 8);
+        g.lineStyle(2, on ? COLORS.friendly : 0x4a5a50, 1);
+        g.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, 8);
+
+        // A pill on the right that slides and changes colour, so the state is
+        // readable without reading the words.
+        const pill = { w: 46, h: 20 };
+        const px = rect.x + rect.width - pill.w - 10;
+        const py = rect.y + (rect.height - pill.h) / 2;
+        g.fillStyle(on ? COLORS.friendly : 0x39463d, 1);
+        g.fillRoundedRect(px, py, pill.w, pill.h, 10);
+        g.fillStyle(0xffffff, 1);
+        g.fillCircle(on ? px + pill.w - 10 : px + 10, py + pill.h / 2, 7);
+
+        this.switchLabel.setText(`T   AMMO & RELOADS: ${on ? 'ON' : 'OFF'}`);
+        this.switchLabel.setColor(on ? '#ffffff' : '#9fb0a5');
+    }
+
+    toggleAmmo() {
+        toggleSetting('ammo');
+        this.audio.play('select');
+        this.drawSwitch();
     }
 
     drawBackdrop(w, h) {
@@ -158,6 +209,12 @@ export class MenuScene extends Phaser.Scene {
     }
 
     onClick(pointer) {
+        const rect = this.switchRect;
+        if (rect && pointer.x >= rect.x && pointer.x <= rect.x + rect.width
+            && pointer.y >= rect.y && pointer.y <= rect.y + rect.height) {
+            this.toggleAmmo();
+            return;
+        }
         const index = this.cardAt(pointer);
         if (index !== -1) this.launch(index);
     }

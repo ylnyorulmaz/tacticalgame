@@ -11,6 +11,9 @@ import { Unit, doorAtPoint } from '../systems/units.js';
 import { updateHostile } from '../systems/ai.js';
 import { updateSupport } from '../systems/support.js';
 import { updateCover } from '../systems/cover.js';
+import * as orders from '../systems/orders.js';
+import { AlarmSystem, ALARMED } from '../systems/alarm.js';
+import { ObjectiveSystem, rateMission } from '../systems/objectives.js';
 import { getAudio } from '../systems/audio.js';
 import { EffectSystem } from '../systems/effects.js';
 import { InputController } from '../systems/input.js';
@@ -31,7 +34,10 @@ export class GameScene extends Phaser.Scene {
         this.paused = false;
         this.outcome = null;
         this.outcomeAnnounced = false;
+        this.failure = null;
+        this.rating = null;
         this.feed = [];          // newest-first lines for the HUD event feed
+        this.pendingOrder = null; // aimed verb waiting for a click, shown by the HUD
         // A fresh level every mission: doors carry open/shut state.
         this.level = buildMap(this.mapId);
         const level = this.level;
@@ -46,6 +52,7 @@ export class GameScene extends Phaser.Scene {
         // Shared with the menu scene: one sound bank, one mute state.
         this.audio = getAudio(this);
         this.effects = new EffectSystem();
+        this.alarm = new AlarmSystem();
 
         this.squad = level.squad.map((spec) => new Unit(spec));
         this.hostiles = level.hostiles.map((spec) => {
@@ -57,18 +64,36 @@ export class GameScene extends Phaser.Scene {
         this.units = [...this.squad, ...this.hostiles];
         this.selected = [];
 
+        this.objectives = new ObjectiveSystem(level);
+        // A rescue needs somebody to rescue. They start where the map says and
+        // do not move until an operator reaches them.
+        const rescue = this.objectives.list.find((o) => o.kind === 'rescue');
+        if (rescue) {
+            const hostage = new Unit({ cls: 'hostage', x: rescue.x, y: rescue.y, facing: Math.PI / 2 });
+            this.objectives.hostage = hostage;
+            this.units.push(hostage);
+        }
+        // For the end-of-mission grade.
+        this.startedAt = null;
+        this.shotsFired = 0;
+
         this.ctx = {
             vision: this.vision,
             nav: this.nav,
+            level,
             friendlies: this.squad,
             hostiles: this.hostiles,
             noises: this.combat.noises,
+            spawnHostile: (cls, x, y) => this.spawnHostile(cls, x, y),
             // A shut door is pathable (you can plan through it) but not walkable
             // until it is actually breached open.
             blocked: (x, y) => this.nav.isBlockedWorld(x, y) || !!doorAtPoint(this.level.doors, x, y, 2),
             closedDoorAt: (x, y) => doorAtPoint(this.level.doors, x, y, 10),
-            openDoor: (door) => this.openDoor(door),
-            onBreachStart: (unit) => this.audio.play('breachStart', unit.x, unit.y),
+            openDoor: (door, chargedBy) => this.openDoor(door, chargedBy),
+            onBreachStart: (unit, door, charge) => {
+                this.audio.play('breachStart', unit.x, unit.y);
+                if (charge) this.pushFeed(`Charge set on ${door.id}`, '#ff8a3a');
+            },
             repath: (unit, point) => {
                 const path = this.nav.findPath(unit.x, unit.y, point.x, point.y);
                 unit.setPath(path);
@@ -87,11 +112,29 @@ export class GameScene extends Phaser.Scene {
         if (!this.scene.isActive('hud')) this.scene.launch('hud');
     }
 
-    openDoor(door) {
+    // A reinforcement walking onto the map mid-mission. The arrays the systems
+    // hold are the same ones, so pushing is enough — nothing needs rebuilding.
+    spawnHostile(cls, x, y) {
+        const cell = this.nav.cellAtWorld(x, y);
+        const open = this.nav.nearestOpen(cell.cx, cell.cy);
+        const at = open ? { x: open.cx * CELL + CELL / 2, y: open.cy * CELL + CELL / 2 } : { x, y };
+        const unit = new Unit({ cls, x: at.x, y: at.y, facing: Math.PI / 2 });
+        this.hostiles.push(unit);
+        this.units.push(unit);
+        return unit;
+    }
+
+    openDoor(door, chargedBy = null) {
         if (door.open) return;
         door.open = true;
-        this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
-        this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
+        if (chargedBy) {
+            // The charge takes the door and whatever was standing behind it.
+            this.combat.blastDoor(door, this.units);
+            this.pushFeed(`${door.id} blown`, '#ff8a3a');
+        } else {
+            this.audio.play('breach', door.x + door.w / 2, door.y + door.h / 2);
+            this.pushFeed(`Door breached: ${door.id}`, '#ffd24a');
+        }
         this.nav.rebuild();
         this.vision.refreshSegments();
         this.combat.refreshBlockers();
@@ -129,13 +172,17 @@ export class GameScene extends Phaser.Scene {
         this.audio.play('select');
     }
 
-    issueMoveOrder(x, y, queue) {
+    issueMoveOrder(x, y, queue, facing = null) {
         if (this.outcome || this.selected.length === 0) return;
         const targets = formationTargets(x, y, this.selected.length);
         let ordered = 0;
 
         this.selected.forEach((unit, i) => {
             if (!unit.alive) return;
+            // Walking somewhere supersedes standing and suppressing, or waiting
+            // beside a door.
+            orders.clearOnMove(unit);
+            unit.order.facing = facing;
             const wanted = targets[i];
             const cell = this.nav.cellAtWorld(wanted.x, wanted.y);
             const open = this.nav.nearestOpen(cell.cx, cell.cy);
@@ -163,6 +210,86 @@ export class GameScene extends Phaser.Scene {
         if (ordered > 0) this.audio.play('order');
     }
 
+    // --- Order verbs -------------------------------------------------------
+    // Each one applies to the current selection and reports itself in the feed,
+    // because an order you cannot see the result of is an order you stop using.
+
+    orderHold() {
+        if (this.outcome || this.selected.length === 0) return;
+        const stance = orders.toggleHold(this.selected);
+        this.audio.play('order');
+        this.pushFeed(stance === 'hold' ? 'Holding fire' : 'Weapons free', '#ffd24a');
+    }
+
+    orderPace() {
+        if (this.outcome || this.selected.length === 0) return;
+        const pace = orders.cyclePace(this.selected);
+        this.audio.play('order');
+        this.pushFeed(`Pace: ${pace}`, '#cfe9ff');
+    }
+
+    orderGo() {
+        if (this.outcome) return;
+        const waiting = this.squad.filter((u) => u.alive && u.order.stackAt);
+        if (waiting.length === 0) return;
+        orders.goBreach(waiting, this.ctx);
+        this.audio.play('order');
+        this.pushFeed(`GO — ${waiting.length} through the door`, '#ffd24a');
+    }
+
+    // The three verbs that need a point on the map: armed by a key, resolved by
+    // the next click.
+    resolveAimedOrder(verb, x, y) {
+        if (this.outcome || this.selected.length === 0) return;
+
+        if (verb === 'suppress') {
+            const ordered = orders.setSuppress(this.selected, x, y);
+            if (ordered === 0) {
+                this.pushFeed('Too far to suppress', '#ff6b6b');
+                return;
+            }
+            this.audio.play('order');
+            this.pushFeed(`Suppressing — ${ordered} on the gun`, '#ffd24a');
+            return;
+        }
+
+        if (verb === 'frag' || verb === 'smoke' || verb === 'flash') {
+            const thrower = orders.setThrow(this.selected, x, y, verb);
+            if (!thrower) {
+                this.pushFeed(`No ${verb} in range`, '#ff6b6b');
+                return;
+            }
+            this.audio.play('order');
+            this.pushFeed(`${thrower.stats.name}: ${verb} out`, '#ffd24a');
+            return;
+        }
+
+        if (verb === 'stack') {
+            const door = this.nearestClosedDoor(x, y);
+            if (!door) {
+                this.pushFeed('No door there', '#ff6b6b');
+                return;
+            }
+            const ordered = orders.stackOn(this.selected, door, this.ctx);
+            if (ordered === 0) return;
+            this.audio.play('order');
+            this.pushFeed(`Stacking on ${door.id} — Enter to go`, '#7fd8ff');
+        }
+    }
+
+    nearestClosedDoor(x, y, reach = 90) {
+        let best = null;
+        let bestDist = reach;
+        for (const door of this.level.doors) {
+            if (door.open) continue;
+            const dist = Math.hypot(door.x + door.w / 2 - x, door.y + door.h / 2 - y);
+            if (dist > bestDist) continue;
+            best = door;
+            bestDist = dist;
+        }
+        return best;
+    }
+
     update(time, delta) {
         const dt = Math.min(delta, 50);
         this.inputCtl.update(dt);
@@ -173,9 +300,18 @@ export class GameScene extends Phaser.Scene {
             for (const unit of this.units) unit.separate(this.units, this.ctx);
             updateCover(this.units, this.level);
             this.combat.update(dt, this.units, time);
+            // Smoke is an occluder like any other, it just moves: hand the
+            // current clouds to the vision system before anything asks what it
+            // can see this frame.
+            this.vision.setClouds(this.combat.clouds);
             updateSupport(this.units, dt, this.combat.events);
             this.effects.update(dt, this.combat.projectiles);
-            this.checkOutcome();
+            this.alarm.update(dt, this.ctx);
+            this.announceAlarm();
+            this.objectives.update(dt, this.ctx);
+            this.announceObjectives();
+            if (this.startedAt === null) this.startedAt = time;
+            this.checkOutcome(time);
         }
 
         // One event stream, two consumers: the audio engine reads `type`, the
@@ -183,6 +319,7 @@ export class GameScene extends Phaser.Scene {
         // even while paused, so the last shots before a pause are not swallowed.
         if (this.combat.events.length > 0) {
             for (const event of this.combat.events) {
+                if (event.kind === 'shot') this.shotsFired++;
                 this.audio.play(event.type, event.x, event.y);
                 this.effects.handle(event);
                 this.recordEvent(event);
@@ -204,6 +341,8 @@ export class GameScene extends Phaser.Scene {
             units: this.units,
             projectiles: this.combat.projectiles,
             explosions: this.combat.explosions,
+            clouds: this.combat.clouds,
+            objectives: this.objectives,
             effects: this.effects,
             time,
             vision: this.vision,
@@ -236,18 +375,56 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
+    // The alarm reports itself: a line in the feed and, when it goes up, a sound
+    // the player will learn to dread.
+    announceAlarm() {
+        for (const change of this.alarm.drain()) {
+            if (change === ALARMED) {
+                this.audio.play('alarm');
+                this.pushFeed('ALARM RAISED — they know you are here', '#ff6b6b');
+            } else if (change === 'reinforcements') {
+                this.audio.play('alarm');
+                this.pushFeed('Reinforcements inbound', '#ff8a3a');
+            } else {
+                this.pushFeed('Something got their attention', '#ffd24a');
+            }
+        }
+    }
+
+    announceObjectives() {
+        for (const objective of this.objectives.drain()) {
+            this.audio.play('objective');
+            this.pushFeed(`✔ ${objective.label || objective.kind}`, '#7df07d');
+        }
+    }
+
     pushFeed(text, color) {
         this.feed.unshift({ text, color, at: this.time.now });
         this.feed.length = Math.min(this.feed.length, 5);
     }
 
-    checkOutcome() {
-        // A downed squadmate is not a lost one until it bleeds out.
-        if (this.hostiles.every((u) => !u.alive)) this.outcome = 'win';
-        else if (this.squad.every((u) => !u.alive && !u.downed)) this.outcome = 'lose';
+    // The mission ends when its objectives say so, not when the last hostile
+    // falls — on two of the three maps those are different moments.
+    checkOutcome(time) {
+        if (this.objectives.failed) {
+            this.outcome = 'lose';
+            this.failure = this.objectives.failure;
+        } else if (this.objectives.complete) {
+            this.outcome = 'win';
+        } else if (this.squad.every((u) => !u.alive && !u.downed)) {
+            // A downed squadmate is not a lost one until it bleeds out.
+            this.outcome = 'lose';
+            this.failure = 'Squad eliminated';
+        }
         if (this.outcome && !this.outcomeAnnounced) {
             this.outcomeAnnounced = true;
             this.audio.play(this.outcome);
+            this.rating = rateMission({
+                timeMs: time - (this.startedAt ?? time),
+                casualties: this.squad.filter((u) => !u.alive && !u.downed).length,
+                alarmRaised: this.alarm.everAlarmed,
+                bonusDone: this.objectives.list.some((o) => o.optional && o.done),
+            });
         }
     }
 
@@ -255,15 +432,33 @@ export class GameScene extends Phaser.Scene {
         const lead = this.selected.length > 0 ? this.selected[0] : null;
         return {
             cls: lead ? lead.cls : null,
-            grenadesLeft: lead ? lead.grenadesLeft : 0,
+            kit: lead ? lead.kit : null,
+            // What the order palette needs to show the state of the selection.
+            hasSelection: this.selected.length > 0,
+            stance: lead ? lead.order.stance : 'free',
+            pace: lead ? lead.order.pace : 'normal',
+            // Totals across the selection, since an aimed throw goes to whoever
+            // in it is best placed rather than to the lead.
+            kitTotals: this.selected.reduce((sum, u) => {
+                for (const key of Object.keys(u.kit)) sum[key] = (sum[key] || 0) + u.kit[key];
+                return sum;
+            }, {}),
+            suppressing: this.selected.some((u) => u.order.suppressAt),
+            stacked: this.squad.filter((u) => u.alive && u.order.stackAt).length,
+            pendingOrder: this.pendingOrder,
             hostilesTotal: this.hostiles.length,
             hostilesDown: this.hostiles.filter((u) => !u.alive).length,
             squadTotal: this.squad.length,
             squadAlive: this.squad.filter((u) => u.alive).length,
             squadDown: this.squad.filter((u) => u.downed).length,
             feed: this.feed,
+            alarm: this.alarm.state,
+            objectives: this.objectives.status(),
+            shotsFired: this.shotsFired,
             paused: this.paused,
             outcome: this.outcome,
+            failure: this.failure,
+            rating: this.rating,
             muted: this.audio.muted || !this.audio.available,
         };
     }

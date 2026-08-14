@@ -150,9 +150,61 @@ export const SPRITE = {
         9099,
         710
     ],
-    lose: [
+    suppressed_1: [
         9839,
-        922
+        146
+    ],
+    suppressed_2: [
+        10015,
+        150
+    ],
+    suppressed_3: [
+        10195,
+        140
+    ],
+    reload_1: [
+        10365,
+        686
+    ],
+    reload_2: [
+        11081,
+        687
+    ],
+    smokePop_1: [
+        11798,
+        721
+    ],
+    smokePop_2: [
+        12549,
+        712
+    ],
+    flashBang_1: [
+        13291,
+        781
+    ],
+    flashBang_2: [
+        14102,
+        785
+    ],
+    charge_1: [
+        14917,
+        358
+    ],
+    charge_2: [
+        15305,
+        348
+    ],
+    alarm: [
+        15683,
+        623
+    ],
+    objective: [
+        16336,
+        306
+    ],
+    lose: [
+        16672,
+        923
     ]
 };
 
@@ -229,6 +281,33 @@ export const VARIANTS = {
     ],
     win: [
         "win"
+    ],
+    suppressed: [
+        "suppressed_1",
+        "suppressed_2",
+        "suppressed_3"
+    ],
+    reload: [
+        "reload_1",
+        "reload_2"
+    ],
+    smokePop: [
+        "smokePop_1",
+        "smokePop_2"
+    ],
+    flashBang: [
+        "flashBang_1",
+        "flashBang_2"
+    ],
+    charge: [
+        "charge_1",
+        "charge_2"
+    ],
+    alarm: [
+        "alarm"
+    ],
+    objective: [
+        "objective"
     ],
     lose: [
         "lose"

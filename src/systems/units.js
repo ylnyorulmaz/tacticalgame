@@ -1,8 +1,10 @@
 // Unit model: stats, movement along a smoothed path, door breaching, damage and
 // death. Rendering lives in render/entities.js — a unit here is plain state.
 
-import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED } from '../config.js';
+import { UNIT_CLASSES, UNIT_RADIUS, SUPPRESSION, DOWNED, TOOLS } from '../config.js';
 import { rectContains } from '../level.js';
+import { makeOrder, paceScale, staysSet } from './orders.js';
+import { settings } from './settings.js';
 
 let nextId = 1;
 
@@ -32,6 +34,9 @@ export class Unit {
         this.pathIndex = 0;
         this.orderPoint = null;
         this.breaching = null;
+        // What the player has told this unit to do beyond walking. Hostiles
+        // carry the record too and simply never have it written to.
+        this.order = makeOrder();
 
         // Weapon state.
         this.fireTimer = 0;
@@ -40,8 +45,23 @@ export class Unit {
         this.target = null;
         this.muzzleFlash = 0;
         this.recoil = 0;
-        this.grenadesLeft = this.stats.grenade ? this.stats.grenade.count : 0;
+        // Throwables and door charges, copied per unit so spending one does not
+        // empty the whole class's pouch.
+        this.kit = { frag: 0, smoke: 0, flash: 0, charge: 0, ...(this.stats.kit || {}) };
         this.grenadeTimer = 0;
+        // Flashbanged: cannot see, cannot shoot, and the brain treats it as
+        // being pinned.
+        this.blinded = 0;
+
+        // Magazines, but only if the player asked for them on the menu. With the
+        // switch off these are Infinity, which turns every ammo check below into
+        // a no-op rather than forking the firing code down a second path.
+        const weapon = this.stats.weapon;
+        const finite = settings.ammo && !!weapon.magazine;
+        this.magSize = finite ? weapon.magazine : Infinity;
+        this.mag = this.magSize;
+        this.reserve = finite ? weapon.magazine * (weapon.spare || 0) : Infinity;
+        this.reloadTimer = 0;
 
         // How long this unit has been standing still (the marksman needs to be
         // set before firing) and how much incoming fire is pinning it down.
@@ -127,9 +147,33 @@ export class Unit {
         this.burstLeft = this.stats.weapon.burst;
     }
 
+    // Out of rounds and out of magazines: this weapon is finished for the
+    // mission, which the roster reports so it is never a silent failure.
+    get isDry() {
+        return this.mag <= 0 && this.reserve <= 0;
+    }
+
+    startReload() {
+        if (this.reloadTimer > 0 || this.reserve <= 0 || this.mag >= this.magSize) return false;
+        this.reloadTimer = this.stats.weapon.reloadTime || 2000;
+        return true;
+    }
+
+    finishReload() {
+        const taken = Math.min(this.magSize - this.mag, this.reserve);
+        this.mag += taken;
+        this.reserve -= taken;
+        this.reloadTimer = 0;
+    }
+
     addSuppression(amount) {
         if (!this.alive) return;
         this.suppression = Math.min(SUPPRESSION.max, this.suppression + amount);
+    }
+
+    blind(ms) {
+        if (!this.alive) return;
+        this.blinded = Math.max(this.blinded, ms);
     }
 
     update(dt, ctx) {
@@ -147,7 +191,12 @@ export class Unit {
         this.fireTimer = Math.max(0, this.fireTimer - dt);
         this.burstGapTimer = Math.max(0, this.burstGapTimer - dt);
         this.grenadeTimer = Math.max(0, this.grenadeTimer - dt);
+        this.blinded = Math.max(0, this.blinded - dt);
         this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
+        if (this.reloadTimer > 0) {
+            this.reloadTimer -= dt;
+            if (this.reloadTimer <= 0) this.finishReload();
+        }
         this.recoil = Math.max(0, this.recoil - dt / 90);   // gun slides back home
         this.suppression = Math.max(0, this.suppression - (SUPPRESSION.decayPerSecond * dt) / 1000);
         // Hysteresis, so a unit hovering at the threshold does not flicker
@@ -160,9 +209,10 @@ export class Unit {
         this.step(dt, ctx);
 
         // Breaching or held in place still counts as being set, which is what
-        // the marksman's steady requirement reads.
+        // the marksman's steady requirement reads — and so does creeping, which
+        // is the whole reason to order a careful pace.
         const travelled = Math.hypot(this.x - startX, this.y - startY);
-        this.stationaryFor = travelled > 0.35 ? 0 : this.stationaryFor + dt;
+        this.stationaryFor = travelled > 0.35 && !staysSet(this) ? 0 : this.stationaryFor + dt;
     }
 
     step(dt, ctx) {
@@ -170,7 +220,7 @@ export class Unit {
             this.breaching.timer -= dt;
             this.facing = turnToward(this.facing, this.breaching.angle, this.stats.turnSpeed * dt / 1000);
             if (this.breaching.timer <= 0) {
-                ctx.openDoor(this.breaching.door);
+                ctx.openDoor(this.breaching.door, this.breaching.charge ? this : null);
                 this.breaching = null;
                 // The grid changed under us; re-plan the rest of the route.
                 if (this.orderPoint) ctx.repath(this, this.orderPoint);
@@ -179,10 +229,18 @@ export class Unit {
         }
 
         this.moveAlongPath(dt, ctx);
+        this.facing = turnToward(this.facing, this.desiredFacing(), (this.stats.turnSpeed * dt) / 1000);
+    }
 
-        // Aim at whatever we are shooting at, otherwise look where we are going.
-        const desired = this.target && this.target.alive ? this.aimAngle : this.travelAngle ?? this.facing;
-        this.facing = turnToward(this.facing, desired, (this.stats.turnSpeed * dt) / 1000);
+    // What this unit wants to be looking at, in priority order: its target, the
+    // ground it was told to suppress, the arrival facing it was given, and
+    // failing all of that, wherever it is walking.
+    desiredFacing() {
+        if (this.target && this.target.alive) return this.aimAngle;
+        const order = this.order;
+        if (order.suppressAt) return Math.atan2(order.suppressAt.y - this.y, order.suppressAt.x - this.x);
+        if (!this.path && order.facing !== null) return order.facing;
+        return this.travelAngle ?? this.facing;
     }
 
     moveAlongPath(dt, ctx) {
@@ -193,16 +251,25 @@ export class Unit {
         }
 
         const waypoint = this.path[this.pathIndex];
-        const door = ctx.closedDoorAt(waypoint.x, waypoint.y);
+        // A unit told to stack waits beside the door instead of forcing it.
+        const door = this.order.stackAt ? null : ctx.closedDoorAt(waypoint.x, waypoint.y);
         if (door) {
             const gap = Math.hypot(door.x + door.w / 2 - this.x, door.y + door.h / 2 - this.y);
             if (gap < 52) {
+                // An ordered breach with a charge in the pouch is quick and very
+                // loud; anything else is forced by hand.
+                const charge = this.order.useCharge && this.kit.charge > 0;
+                if (charge) {
+                    this.kit.charge -= 1;
+                    this.order.useCharge = false;
+                }
                 this.breaching = {
                     door,
-                    timer: this.stats.breachTime,
+                    charge,
+                    timer: charge ? TOOLS.charge.placeTime + TOOLS.charge.fuse : this.stats.breachTime,
                     angle: Math.atan2(door.y + door.h / 2 - this.y, door.x + door.w / 2 - this.x),
                 };
-                if (ctx.onBreachStart) ctx.onBreachStart(this, door);
+                if (ctx.onBreachStart) ctx.onBreachStart(this, door, charge);
                 return;
             }
         }
@@ -220,7 +287,7 @@ export class Unit {
         }
 
         this.travelAngle = Math.atan2(dy, dx);
-        const step = (this.stats.speed * dt) / 1000;
+        const step = (this.stats.speed * paceScale(this) * dt) / 1000;
         const nx = this.x + (dx / dist) * step;
         const ny = this.y + (dy / dist) * step;
 

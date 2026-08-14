@@ -5,7 +5,7 @@
 import { COLORS, DOWNED } from '../config.js';
 import { GUN, drawWeapon } from './weapons.js';
 
-const SLOT = { width: 132, height: 56, gap: 8 };
+const SLOT = { width: 140, height: 56, gap: 8 };
 
 export class Roster {
     constructor(scene) {
@@ -25,7 +25,7 @@ export class Roster {
                 color,
                 fontStyle: 'bold',
             }).setDepth(41).setShadow(0, 1, '#000000aa', 3);
-            this.labels.push({ name: make(13, '#ffffff'), state: make(11, '#ffd24a') });
+            this.labels.push({ name: make(12, '#ffffff'), state: make(11, '#ffd24a') });
         }
     }
 
@@ -47,7 +47,7 @@ export class Roster {
         this.ensureLabels(squad.length);
         this.slots.forEach((slot, i) => {
             this.labels[i].name.setPosition(slot.x + 40, slot.y + 8);
-            this.labels[i].state.setPosition(slot.x + 40, slot.y + 36);
+            this.labels[i].state.setPosition(slot.x + 40, slot.y + 38);
         });
         for (let i = squad.length; i < this.labels.length; i++) {
             this.labels[i].name.setText('');
@@ -103,7 +103,7 @@ export class Roster {
 
             // Health, or the bleed-out clock for a casualty.
             const barX = slot.x + 40;
-            const barY = slot.y + 26;
+            const barY = slot.y + 24;
             const barW = slot.width - 52;
             g.fillStyle(0x000000, 0.6);
             g.fillRect(barX - 1, barY - 1, barW + 2, 7);
@@ -119,6 +119,24 @@ export class Roster {
 
             labels.state.setText(stateLabel(unit));
             labels.state.setColor(stateColor(unit));
+
+            // Ammunition, drawn rather than written: a bar for the rounds in the
+            // magazine and a tick per spare. Text here would fight the name and
+            // the state tag for the same few pixels, and this reads faster.
+            if (!dead && Number.isFinite(unit.magSize)) {
+                const magW = barW * 0.62;
+                const ratio = Math.max(0, unit.mag / unit.magSize);
+                g.fillStyle(0x000000, 0.6);
+                g.fillRect(barX - 1, barY + 7, magW + 2, 5);
+                g.fillStyle(unit.isDry ? COLORS.hpCrit : unit.mag === 0 ? 0xffd24a : 0xcfe9ff, 1);
+                g.fillRect(barX, barY + 8, magW * ratio, 3);
+
+                const spares = Math.min(6, Math.ceil(unit.reserve / unit.magSize));
+                for (let s = 0; s < spares; s++) {
+                    g.fillStyle(0xcfe9ff, 0.85);
+                    g.fillRect(barX + magW + 6 + s * 6, barY + 8, 3, 3);
+                }
+            }
         });
     }
 
@@ -136,17 +154,26 @@ function stateLabel(unit) {
     if (unit.downed) return unit.reviveProgress > 0 ? 'BEING REVIVED' : 'DOWN';
     if (unit.breaching) return 'BREACHING';
     if (unit.reviving) return 'REVIVING';
+    if (unit.blinded > 0) return 'BLINDED';
     if (unit.pinned) return 'PINNED';
+    if (unit.reloadTimer > 0) return 'RELOADING';
+    if (unit.isDry) return 'DRY';
+    if (unit.order.stackAt) return unit.path ? 'TO STACK' : 'STACKED';
+    if (unit.order.suppressAt) return 'SUPPRESSING';
+    if (unit.order.stance === 'hold') return 'WEAPONS TIGHT';
     if (unit.inCover > 0.35) return 'IN COVER';
     if (unit.target) return 'ENGAGING';
-    if (unit.path) return 'MOVING';
+    if (unit.path) return unit.order.pace === 'sprint' ? 'SPRINTING' : 'MOVING';
     return 'HOLDING';
 }
 
 function stateColor(unit) {
     if (!unit.alive && !unit.downed) return '#8b9a92';
     if (unit.downed) return '#ff6b6b';
-    if (unit.pinned) return '#ff6b6b';
+    if (unit.pinned || unit.isDry || unit.blinded > 0) return '#ff6b6b';
+    if (unit.reloadTimer > 0) return '#ffd24a';
+    if (unit.order.stackAt) return '#7fd8ff';
+    if (unit.order.suppressAt || unit.order.stance === 'hold') return '#ffd24a';
     if (unit.inCover > 0.35) return '#7df07d';
     if (unit.target || unit.breaching) return '#ffd24a';
     return '#cfe9ff';

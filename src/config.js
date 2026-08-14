@@ -55,7 +55,11 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1500,
             burst: 3,
             burstGap: 620,
+            magazine: 30,
+            spare: 6,
+            reloadTime: 2200,
         },
+        kit: { smoke: 1 },
         bars: { Speed: 6, Firepower: 6, Survivability: 6, Range: 8 },
         ability: 'Balanced rifleman',
     },
@@ -78,8 +82,12 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1250,
             burst: 1,
             burstGap: 0,
+            magazine: 6,
+            spare: 6,
+            reloadTime: 2700,
             pellets: 3,
         },
+        kit: { charge: 2, flash: 2 },
         bars: { Speed: 8, Firepower: 9, Survivability: 8, Range: 3 },
         ability: 'Forces doors twice as fast',
     },
@@ -102,6 +110,9 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1450,
             burst: 3,
             burstGap: 700,
+            magazine: 30,
+            spare: 8,
+            reloadTime: 2400,
         },
         // Thrown instead of the rifle when a target is far enough away to be
         // worth a charge. Runs dry, at which point this is a plain rifleman.
@@ -113,6 +124,7 @@ export const UNIT_CLASSES = {
             damage: 70,
             speed: 470,
         },
+        kit: { frag: 4, smoke: 2 },
         bars: { Speed: 5, Firepower: 9, Survivability: 6, Range: 6 },
         ability: 'Grenades arc over cover',
     },
@@ -135,6 +147,9 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1400,
             burst: 4,
             burstGap: 720,
+            magazine: 32,
+            spare: 5,
+            reloadTime: 2000,
         },
         support: {
             healRate: 9,        // hp per second, only while not engaging
@@ -142,6 +157,7 @@ export const UNIT_CLASSES = {
             reviveTime: 2600,
             reviveHp: 45,
         },
+        kit: { smoke: 2 },
         bars: { Speed: 7, Firepower: 3, Survivability: 7, Range: 4 },
         ability: 'Heals nearby · revives downed',
     },
@@ -155,8 +171,11 @@ export const UNIT_CLASSES = {
         turnSpeed: 5,
         breachTime: 1700,
         weapon: {
-            name: 'Marksman Rifle',
-            sound: 'dmr',
+            // Suppressed: the squad's one quiet weapon. A kill with it does not
+            // raise the alarm, though the body still will once somebody finds it.
+            name: 'Suppressed DMR',
+            sound: 'suppressed',
+            suppressed: true,
             damage: 52,
             cooldown: 1500,
             spread: 0.008,
@@ -164,8 +183,12 @@ export const UNIT_CLASSES = {
             bulletSpeed: 2200,
             burst: 1,
             burstGap: 0,
+            magazine: 10,
+            spare: 6,
+            reloadTime: 2500,
         },
         steadyTime: 420,        // ms stationary before the shot can be taken
+        kit: { },
         bars: { Speed: 4, Firepower: 8, Survivability: 3, Range: 10 },
         ability: 'Must be set to shoot',
     },
@@ -188,10 +211,41 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1500,
             burst: 14,
             burstGap: 1200,
+            magazine: 100,
+            spare: 3,
+            reloadTime: 4200,
         },
         suppressionPerHit: 26,  // applied on hits and near misses alike
+        kit: { },
         bars: { Speed: 3, Firepower: 7, Survivability: 7, Range: 6 },
         ability: 'Sustained fire pins hostiles',
+    },
+    // Not a fighter: carries nothing, shoots at nobody, and is not deliberately
+    // targeted by either side. Stray rounds and blast are what kill them, which
+    // is exactly why a frag is the wrong tool on a rescue.
+    hostage: {
+        id: 'hostage',
+        name: 'Hostage',
+        team: 'civilian',
+        noncombatant: true,
+        hp: 60,
+        speed: 126,
+        sight: 220,
+        turnSpeed: 7,
+        breachTime: 99999,
+        weapon: {
+            name: 'Unarmed',
+            sound: 'carbine',
+            damage: 0,
+            cooldown: 99999,
+            spread: 0,
+            range: 0,
+            bulletSpeed: 1,
+            burst: 1,
+            burstGap: 0,
+        },
+        bars: { Speed: 6, Firepower: 0, Survivability: 2, Range: 0 },
+        ability: 'Get them out alive',
     },
     hostile: {
         id: 'hostile',
@@ -212,6 +266,9 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1300,
             burst: 3,
             burstGap: 900,
+            magazine: 30,
+            spare: 8,
+            reloadTime: 2400,
         },
         bars: { Speed: 4, Firepower: 5, Survivability: 4, Range: 6 },
         ability: 'Holds its assigned arc',
@@ -235,6 +292,9 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1250,
             burst: 1,
             burstGap: 0,
+            magazine: 2,
+            spare: 20,
+            reloadTime: 1900,
             pellets: 3,
         },
         aggressive: true,       // closes the distance instead of holding ground
@@ -260,10 +320,52 @@ export const UNIT_CLASSES = {
             bulletSpeed: 1400,
             burst: 4,
             burstGap: 850,
+            magazine: 20,
+            spare: 8,
+            reloadTime: 3000,
         },
         bars: { Speed: 2, Firepower: 7, Survivability: 8, Range: 8 },
         ability: 'Slow, tough, long reach',
     },
+};
+
+// Throwables and door charges. Smoke is the odd one out: it stops sight without
+// stopping a bullet, which is exactly what makes it worth carrying — you can
+// cross open ground behind it, and so can they.
+export const TOOLS = {
+    frag: { radius: 96, damage: 70, speed: 470, minRange: 140, cooldown: 4200 },
+    smoke: {
+        radius: 104,
+        speed: 430,
+        cooldown: 3000,
+        duration: 13000,    // ms the cloud blocks sight for
+        growTime: 1100,     // ms to bloom to full size
+        fadeTime: 2600,     // ms of thinning out at the end
+    },
+    flash: {
+        radius: 165,
+        speed: 480,
+        cooldown: 3500,
+        blindTime: 3200,    // ms of blindness at the centre, less further out
+    },
+    charge: {
+        radius: 120,
+        damage: 55,
+        placeTime: 700,     // ms to set it on the door
+        fuse: 1400,         // ms from set to bang
+    },
+};
+
+// Orders the player gives on top of "move here". Defaults are chosen so a unit
+// with an untouched order record behaves exactly as it did before orders existed.
+export const ORDERS = {
+    paces: ['normal', 'sprint', 'careful'],
+    sprintScale: 1.45,      // fast, but no shooting on the move
+    carefulScale: 0.6,      // slow, and stays set: the marksman can creep and shoot
+    suppressSpread: 0.06,   // extra cone on fire aimed at ground rather than a body
+    suppressSuppression: 45, // pressure each ordered round applies, whatever the weapon
+    throwRange: 430,        // how far an aimed grenade can be placed
+    stackOffset: 34,        // how far to one side of a door a stacked unit waits
 };
 
 export const AI = {
@@ -287,6 +389,32 @@ export const AI = {
     retreatHp: 0.3,
     retreatDistance: 420,
     retreatTime: 4000,
+};
+
+// Winning is not the same as winning well. Missions are standalone, so the
+// grade is the only reason to run one twice.
+export const RATING = {
+    parTime: 240000,        // ms a clean run is expected to take
+    perCasualty: 18,        // every squadmate you lose
+    alarmPenalty: 22,       // going loud at all
+    perMinuteLate: 6,
+    latePenaltyCap: 20,
+    bonus: 10,              // optional objectives
+    grades: [
+        { min: 92, letter: 'S', note: 'Textbook' },
+        { min: 80, letter: 'A', note: 'Clean' },
+        { min: 65, letter: 'B', note: 'Solid' },
+        { min: 48, letter: 'C', note: 'Messy' },
+        { min: 0, letter: 'D', note: 'Costly' },
+    ],
+};
+
+// The garrison as a whole, rather than one hostile at a time. Going loud is a
+// decision with a cost: a second team walks in.
+export const ALARM = {
+    reinforceDelay: 9000,       // ms from the alarm going up to the wave arriving
+    wave: ['hostile', 'hostileShotgun', 'hostile'],
+    suppressedHearingScale: 0.35,   // how far a suppressed shot carries
 };
 
 // Being tucked behind a barricade makes you a harder target, on top of the

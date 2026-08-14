@@ -95,6 +95,16 @@ export function build() {
             // Roams the western flank — the one that finds you first.
             { cls: 'hostileShotgun', x: 664, y: 756, facing: Math.PI / 2, route: [{ x: 664, y: 756 }, { x: 840, y: 1080 }] },
         ],
+        // Open ground all round, so reinforcements simply drive up: the
+        // northern track and the eastern edge.
+        reinforce: [{ x: 1200, y: 120 }, { x: 2280, y: 620 }],
+        // Somebody is being held in the east hut, and a grenade through the
+        // door kills them as dead as it kills the guard.
+        objectives: [
+            { kind: 'rescue', x: 1620, y: 850, label: 'Reach the hostage' },
+            { kind: 'exfil', x: 400, y: 1230, w: 380, h: 130, label: 'Walk them out' },
+            { kind: 'eliminate', optional: true, label: 'Clear the outpost (bonus)' },
+        ],
         cameraStart: { x: 700, y: 1120 },
     };
 }
